@@ -1,0 +1,15 @@
+ALTER TABLE lga_uat_dm.fact_fflr_event_vw OWNER TO glue_uat_service;
+ALTER TABLE lga_uat_dm.fact_fflr_deficiency_vw OWNER TO glue_uat_service;
+ALTER TABLE lga_uat_dm.fact_appraisal_daily_snapshot_vw OWNER TO glue_uat_service;
+ALTER TABLE lga_uat_dm.fact_loan_event_vw OWNER TO glue_uat_service;
+ALTER TABLE lga_uat_dm.fact_loan_monthly_snapshot_aggregated_vw OWNER TO glue_uat_service;
+ALTER TABLE lga_uat_dm.dim_loan_vw OWNER TO glue_uat_service;
+
+
+
+SELECT schemaname, viewname, viewowner
+FROM pg_views
+WHERE schemaname = 'lga_uat_dm'
+AND viewname IN ('fact_fflr_event_vw','fact_fflr_deficiency_vw',
+                 'fact_appraisal_daily_snapshot_vw','fact_loan_event_vw',
+                 'fact_loan_monthly_snapshot_aggregated_vw','dim_loan_vw');
