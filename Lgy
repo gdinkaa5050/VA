@@ -1,0 +1,16 @@
+SELECT object_name, object_type, status, last_ddl_time
+FROM all_objects
+WHERE object_name = 'ALPS_INFO_MTGE_LOAN'
+AND object_type IN ('PACKAGE','PACKAGE BODY');
+
+
+SELECT object_name, procedure_name, overload
+FROM all_procedures
+WHERE object_name = 'ALPS_INFO_MTGE_LOAN'
+AND procedure_name = 'LOAN_DETAIL_BY_ID';
+
+SELECT text
+FROM all_source
+WHERE name = 'ALPS_INFO_MTGE_LOAN'
+AND type = 'PACKAGE BODY'
+ORDER BY line;
