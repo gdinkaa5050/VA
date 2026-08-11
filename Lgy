@@ -14,3 +14,27 @@ FROM all_source
 WHERE name = 'ALPS_INFO_MTGE_LOAN'
 AND type = 'PACKAGE BODY'
 ORDER BY line;
+
+
+identify the account
+SELECT dbusername, action_name, object_schema, object_name, event_timestamp, client_program_name, userhost
+FROM unified_audit_trail
+WHERE object_name = 'ALPS_INFO_HERS'
+ORDER BY event_timestamp DESC
+FETCH FIRST 20 ROWS ONLY;
+
+
+SELECT s.username, s.program, s.machine, s.logon_time, sq.sql_text
+FROM v$session s
+JOIN v$sql sq ON s.sql_id = sq.sql_id
+WHERE sq.sql_text LIKE '%ALPS_INFO_HERS%';
+
+
+SELECT username, action_name, obj_name, timestamp, userhost
+FROM dba_audit_trail
+WHERE obj_name = 'ALPS_INFO_HERS'
+ORDER BY timestamp DESC;
+
+SELECT owner, name, type
+FROM dba_dependencies
+WHERE referenced_name = 'ALPS_INFO_HERS';
