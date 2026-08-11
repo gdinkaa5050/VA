@@ -43,4 +43,17 @@ LEFT JOIN pg_views p
   ON p.viewname = v.viewname AND p.schemaname = 'lga_uat_dm';
 
 
+SELECT v.viewname AS expected_view, p.viewname AS found
+FROM (VALUES
+    ('fact_fflr_event_vw'),
+    ('fact_fflr_deficiency_vw'),
+    ('fact_appraisal_daily_snapshot_vw'),
+    ('fact_loan_event_vw'),
+    ('fact_loan_monthly_snapshot_aggregated_vw'),
+    ('dim_loan_vw')
+) AS v(viewname)
+LEFT JOIN pg_views p
+  ON p.viewname = v.viewname AND p.schemaname = 'lga_uat_dm';
+
+
 
