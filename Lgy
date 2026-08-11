@@ -38,3 +38,24 @@ ORDER BY timestamp DESC;
 SELECT owner, name, type
 FROM dba_dependencies
 WHERE referenced_name = 'ALPS_INFO_HERS';
+
+SELECT policy_name, audit_option, object_schema, object_name
+FROM audit_unified_enabled_policies aep
+JOIN audit_unified_policies aup ON aep.policy_name = aup.policy_name
+WHERE aup.object_name = 'ALPS_INFO_HERS' OR aup.audit_option LIKE '%EXECUTE%';
+
+SELECT dbusername, action_name, object_schema, object_name, event_timestamp, client_program_name
+FROM unified_audit_trail
+WHERE event_timestamp > SYSDATE - 7
+AND (object_name LIKE '%HERS%' OR client_program_name IS NOT NULL)
+ORDER BY event_timestamp DESC
+FETCH FIRST 50 ROWS ONLY;
+
+SELECT username, program, machine, osuser, logon_time
+FROM v$session
+WHERE program NOT LIKE '%sqldeveloper%' AND program NOT LIKE '%sqlplus%';
+
+SELECT username, program, machine, osuser, logon_time
+FROM v$session
+WHERE username IS NOT NULL
+ORDER BY logon_time DESC;
