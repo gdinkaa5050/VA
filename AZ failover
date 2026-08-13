@@ -1,0 +1,757 @@
+Absolutely. Since you’re operating as the Oracle RDS DBA, I would make the exercise look like a real DBA-led disaster-recovery test rather than just an AWS failover demo.
+One important check before you start: make sure your RDS deployment is the traditional Multi-AZ DB instance deployment, not a Multi-AZ DB cluster. The failover procedure differs. AWS documents that traditional Multi-AZ DB instances support Reboot with failover, while Multi-AZ DB clusters use Failover at the cluster level. �
+AWS Documentation +1
+Also, do this only under the approved ISCP/change window. AWS warns that reboot-with-failover abruptly interrupts the database and client sessions, so transactions should be stopped or controlled before the test. �
+AWS Documentation
+Below is the runbook I would actually use.
+Writing
+ISCP Exercise — AWS RDS Oracle Multi-AZ Failover DBA Runbook
+1. Exercise Objective
+Demonstrate that the DBA team can respond to an AWS Availability Zone outage affecting an Oracle RDS production database.
+The exercise will demonstrate:
+Detection and assessment of the outage
+RDS Multi-AZ failover
+Database validation
+Application connectivity validation
+GoldenGate/DMS validation where applicable
+Security and audit review
+AWS CloudTrail review
+Normal and incident-specific maintenance
+Stakeholder notification
+Measurement of actual Recovery Time Objective (RTO)
+Documentation and closure
+Scenario
+Impact: Availability of database services
+Simulated Cause: AWS Availability Zone outage
+Recovery Mechanism: Amazon RDS Multi-AZ failover
+Primary DBA Objective: Restore and validate database service while maintaining data integrity and confirming that no unauthorized activity occurred.
+2. Roles During the Exercise
+DBA
+Responsible for:
+RDS monitoring
+Database validation
+Failover monitoring
+Oracle validation
+Audit review
+GoldenGate/DMS validation
+Backup validation
+RTO measurement
+Incident documentation
+Application Team
+Responsible for:
+Application connectivity
+Application health checks
+Business transaction validation
+Cloud/AWS Team
+Responsible for:
+AWS infrastructure monitoring
+RDS/AZ validation
+CloudTrail review if required
+AWS-level escalation
+Incident Manager
+Responsible for:
+Incident coordination
+Communication
+Timeline
+Escalation
+Exercise documentation
+3. Pre-Exercise Safety Checks
+Before touching the database:
+[ ] Confirm ISCP exercise/change approval
+[ ] Confirm maintenance/change window
+[ ] Confirm correct AWS account
+[ ] Confirm correct AWS Region
+[ ] Confirm correct production RDS instance
+[ ] Confirm database is Multi-AZ
+[ ] Confirm application team is ready
+[ ] Confirm DBA is authorized to initiate failover
+[ ] Confirm rollback/recovery contacts are available
+[ ] Confirm no critical production activity is occurring
+[ ] Confirm application transactions can be paused or controlled
+Do not perform this exercise against an unapproved production database.
+4. Establish the Baseline — 5 Minutes
+AWS Console
+Navigate to:
+AWS Console → RDS → Databases → Production DB
+Record:
+Item
+Before Failover
+DB Identifier
+__________
+Engine
+Oracle
+Engine Version
+__________
+DB Instance Class
+__________
+Status
+Available
+Multi-AZ
+Yes
+Current AZ
+__________
+Secondary/Standby AZ
+__________
+Endpoint
+__________
+Storage
+__________
+Backup Status
+__________
+Maintenance Window
+__________
+Take a screenshot.
+What to say
+"We are beginning the ISCP exercise. The production Oracle RDS instance is currently available and configured for Multi-AZ. We are documenting the current database, AWS, application, and replication health before introducing the controlled failover."
+5. Oracle Database Baseline
+Connect using TOAD.
+Database status
+Run:
+SELECT
+    SYSDATE AS DB_TIME,
+    INSTANCE_NAME,
+    HOST_NAME,
+    STATUS,
+    DATABASE_STATUS
+FROM V$INSTANCE;
+Expected:
+STATUS            = OPEN
+DATABASE_STATUS   = NORMAL
+Database role
+SELECT
+    NAME,
+    OPEN_MODE,
+    DATABASE_ROLE
+FROM V$DATABASE;
+Expected:
+OPEN_MODE       = READ WRITE
+DATABASE_ROLE   = PRIMARY
+Record the result.
+6. Database Session Baseline
+Run:
+SELECT
+    USERNAME,
+    STATUS,
+    COUNT(*) AS SESSION_COUNT
+FROM V$SESSION
+WHERE USERNAME IS NOT NULL
+GROUP BY USERNAME, STATUS
+ORDER BY USERNAME, STATUS;
+Record:
+Total application sessions: __________
+Total active sessions:      __________
+Do not kill sessions simply to clean up the screen.
+The purpose is to establish a baseline.
+7. Scheduler Job Baseline
+Run:
+SELECT
+    OWNER,
+    JOB_NAME,
+    STATUS,
+    ACTUAL_START_DATE,
+    RUN_DURATION,
+    ERROR#
+FROM DBA_SCHEDULER_JOB_RUN_DETAILS
+WHERE ACTUAL_START_DATE >= SYSDATE - 1
+ORDER BY ACTUAL_START_DATE DESC;
+Look for:
+FAILED
+BROKEN
+STOPPED
+Unexpected errors
+Then:
+SELECT
+    OWNER,
+    JOB_NAME,
+    ENABLED,
+    STATE,
+    LAST_START_DATE,
+    NEXT_RUN_DATE
+FROM DBA_SCHEDULER_JOBS
+WHERE ENABLED = 'TRUE'
+ORDER BY OWNER, JOB_NAME;
+Record any jobs already having problems before the exercise.
+This is important because you don't want to incorrectly attribute a pre-existing job failure to the AZ outage.
+8. Security/Audit Baseline
+Review recent database audit activity.
+If Unified Auditing is enabled:
+SELECT
+    EVENT_TIMESTAMP,
+    DBUSERNAME,
+    ACTION_NAME,
+    RETURN_CODE,
+    OBJECT_SCHEMA,
+    OBJECT_NAME
+FROM UNIFIED_AUDIT_TRAIL
+WHERE EVENT_TIMESTAMP >= SYSTIMESTAMP - INTERVAL '2' HOUR
+ORDER BY EVENT_TIMESTAMP DESC;
+Look for:
+Failed logins
+Privileged access
+DDL
+GRANT
+REVOKE
+CREATE
+ALTER
+DROP
+Unexpected activity
+Record anything abnormal before the test.
+What to say
+"We are establishing an audit baseline so that any activity observed during the exercise can be distinguished from activity that existed before the exercise."
+9. CloudWatch Baseline
+Navigate to:
+RDS → Databases → Production DB → Monitoring
+Capture baseline values for:
+CPUUtilization
+FreeableMemory
+DatabaseConnections
+ReadIOPS
+WriteIOPS
+ReadLatency
+WriteLatency
+DiskQueueDepth
+FreeStorageSpace
+Record:
+Metric
+Baseline
+CPU
+______
+Freeable Memory
+______
+Connections
+______
+Read IOPS
+______
+Write IOPS
+______
+Free Storage
+______
+RDS publishes instance metrics through CloudWatch, which can be used to observe resource utilization and database activity.
+10. Downstream Replication Baseline
+If applicable to this environment, validate:
+GoldenGate
+Record:
+Extract:
+Status = __________
+
+Pump:
+Status = __________
+
+Replicat:
+Status = __________
+
+Lag at checkpoint:
+__________
+
+Time since checkpoint:
+__________
+
+RBA:
+__________
+DMS
+Record:
+Replication instance:
+Status = __________
+
+Task:
+Status = __________
+
+CDC Source Latency:
+__________
+
+CDC Target Latency:
+__________
+
+Free Storage:
+__________
+The purpose is to distinguish pre-existing replication issues from problems caused by the exercise.
+11. Application Baseline
+Ask the application team to confirm:
+Application available:        PASS / FAIL
+Database connection:         PASS / FAIL
+Test transaction:             PASS / FAIL
+Application errors:           NONE / YES
+Record the time:
+Application baseline confirmed:
+Time = __________
+12. START THE FAILOVER EXERCISE
+Important
+At this point all participants should know that the controlled outage is about to begin.
+Announce:
+"Baseline validation is complete. We are now initiating the approved ISCP failover exercise. All timestamps from this point forward will be used to calculate our recovery time."
+Start the RTO clock
+Record:
+T0 — Failover initiated:
+Date: __________
+Time: __________
+Start the stopwatch.
+13. AWS Console — Initiate Failover
+For a traditional RDS Multi-AZ DB instance:
+AWS Console
+→ RDS
+→ Databases
+→ Select production DB
+→ Actions
+→ Reboot
+On the reboot screen:
+Select "Reboot with failover"
+→ Confirm
+→ Reboot
+AWS documents this operation as a way to force a Multi-AZ DB instance to fail over to its standby in another AZ.
+What to say
+"We are intentionally forcing a controlled Multi-AZ failover to simulate loss of the primary Availability Zone. RDS will promote the standby instance in the alternate Availability Zone."
+14. Monitor the Failover
+Immediately record:
+Failover initiated:
+Time = __________
+Monitor:
+RDS → Databases → Production DB
+Expected status may transition through:
+Available
+   ↓
+Rebooting
+   ↓
+Available
+Also monitor:
+RDS → Events
+Look for failover events.
+Important RDS event messages include:
+RDS-EVENT-0013
+Multi-AZ instance failover started.
+
+RDS-EVENT-0015
+Multi-AZ failover to standby complete.
+
+RDS-EVENT-0049
+Multi-AZ instance failover completed.
+AWS documents these events as indicators of Multi-AZ failover activity.
+15. Record the AWS Timeline
+Use this table during the exercise.
+Event
+Timestamp
+T0 — Failover initiated
+__________
+RDS failover started
+__________
+Primary unavailable
+__________
+Standby promoted
+__________
+RDS available
+__________
+Database connection successful
+__________
+Application validated
+__________
+Full service restored
+__________
+Do not estimate these times afterward.
+Record them as the exercise occurs.
+16. Database Recovery Validation
+Once RDS becomes available, reconnect through TOAD.
+Run:
+SELECT
+    SYSDATE AS DB_TIME,
+    INSTANCE_NAME,
+    HOST_NAME,
+    STATUS,
+    DATABASE_STATUS
+FROM V$INSTANCE;
+Expected:
+STATUS          OPEN
+DATABASE_STATUS NORMAL
+Then:
+SELECT
+    NAME,
+    OPEN_MODE,
+    DATABASE_ROLE
+FROM V$DATABASE;
+Expected:
+OPEN_MODE       READ WRITE
+DATABASE_ROLE   PRIMARY
+What to say
+"The RDS instance is available. Oracle is open, the database is READ WRITE, and the database role is PRIMARY. We have successfully restored database availability."
+17. Verify the New Primary/AZ
+Return to:
+RDS → Databases → Production DB
+Record:
+Current AZ after failover:
+________________
+
+Previous AZ:
+________________
+Do not assume that the console will immediately display the new AZ. AWS notes that the console/API can take several minutes to reflect the AZ change after failover.
+The RDS event history and database availability should be used along with the AZ information.
+18. Application Reconnection
+This is critical.
+RDS failover changes the endpoint's underlying destination, so existing connections may need to be cleaned up and re-established.
+Ask the application team to:
+Test database connectivity.
+Confirm connection pool recovery.
+Perform application login.
+Execute an approved business transaction.
+Confirm no application errors.
+Record:
+Application connection:       PASS
+Connection pool recovery:     PASS
+Application login:            PASS
+Business transaction:         PASS
+What to say
+"Database availability alone does not constitute full service recovery. We are now validating that the application successfully re-established database connections and that business functionality is operational."
+19. Calculate Database Recovery Time
+Record:
+T0 = __________
+Database available = __________
+Calculate:
+Database Recovery Time =
+Database Available Time - Failover Start Time
+Example:
+Failover started:       09:15:32
+Database available:     09:16:48
+
+Database recovery:
+1 minute 16 seconds
+20. Calculate Business-Service RTO
+Use application validation as the final recovery point.
+Example:
+Failover started:       09:15:32
+Application validated:  09:17:05
+
+Actual RTO:
+1 minute 33 seconds
+Important
+Do not automatically report:
+"RTO = 60–120 seconds."
+AWS says typical RDS Multi-AZ failover times are 60–120 seconds, but actual time depends on database activity and recovery conditions. Your ISCP exercise should report the measured recovery time in your environment.
+21. Post-Failover Oracle Validation
+Sessions
+SELECT
+    USERNAME,
+    STATUS,
+    COUNT(*) AS SESSION_COUNT
+FROM V$SESSION
+WHERE USERNAME IS NOT NULL
+GROUP BY USERNAME, STATUS
+ORDER BY USERNAME, STATUS;
+Compare with the baseline.
+22. Scheduler Validation
+Run:
+SELECT
+    OWNER,
+    JOB_NAME,
+    STATUS,
+    ACTUAL_START_DATE,
+    RUN_DURATION,
+    ERROR#
+FROM DBA_SCHEDULER_JOB_RUN_DETAILS
+WHERE ACTUAL_START_DATE >= SYSDATE - INTERVAL '2' HOUR
+ORDER BY ACTUAL_START_DATE DESC;
+Look for jobs that failed during the outage.
+If a job failed:
+Determine whether it was caused by the outage.
+Determine whether it automatically retried.
+Determine whether it needs manual intervention.
+Do not rerun it blindly.
+23. Post-Failover Audit Review
+Run:
+SELECT
+    EVENT_TIMESTAMP,
+    DBUSERNAME,
+    ACTION_NAME,
+    RETURN_CODE,
+    OBJECT_SCHEMA,
+    OBJECT_NAME
+FROM UNIFIED_AUDIT_TRAIL
+WHERE EVENT_TIMESTAMP >= SYSTIMESTAMP - INTERVAL '2' HOUR
+ORDER BY EVENT_TIMESTAMP DESC;
+Compare with the pre-failover baseline.
+Specifically look for:
+Unexpected user access
+Failed authentication
+Privileged access
+Unexpected DDL
+CREATE
+ALTER
+DROP
+GRANT
+REVOKE
+Unexpected application activity
+What to say
+"We reviewed the database audit activity surrounding the exercise and found no unauthorized or unexpected database activity."
+Only say "none" if your review actually confirms it.
+24. AWS CloudTrail Review
+Navigate to:
+AWS Console → CloudTrail → Event history
+Filter:
+Event source:
+rds.amazonaws.com
+Then narrow the time range to the exercise.
+Review:
+Who initiated the failover
+RebootDBInstance
+ModifyDBInstance
+Other RDS API calls
+Source identity
+Timestamp
+AWS account
+Region
+CloudTrail records RDS API activity, including calls made through the AWS console and API, and provides information about who made the request and when.
+What to say
+"We are validating the AWS control-plane activity to confirm that the failover-related API activity was authorized and that there were no unexpected RDS configuration changes during the exercise."
+25. GoldenGate Validation
+If GoldenGate is part of the environment, check:
+Extract       RUNNING
+Pump          RUNNING
+Replicat      RUNNING
+Lag            Within SLA
+Time since checkpoint   Current
+RBA            Advancing
+Trail          Advancing
+Distribution Path       RUNNING
+Do not restart a process solely because lag temporarily increased.
+Explain:
+"During the database failover, a temporary increase in GoldenGate lag can be expected. We are validating that the process is recovering and that lag is decreasing toward the normal SLA."
+26. DMS Validation
+Check:
+Replication instance = Available
+Task = Running
+CDC Source Latency = ______
+CDC Target Latency = ______
+Free Storage = ______
+Compare against the pre-failover baseline.
+Example:
+Metric
+Before
+During
+After
+CDC Source Latency
+2 sec
+48 sec
+4 sec
+CDC Target Latency
+3 sec
+52 sec
+5 sec
+What to say
+"DMS experienced a temporary increase in CDC latency during the failover and has recovered toward baseline."
+27. Backup Validation
+Verify:
+Latest automated backup
+Backup status
+Backup retention
+No backup failures
+No unexpected snapshot activity
+Record:
+Latest backup:
+Time = __________
+
+Backup status:
+__________
+
+Backup failure:
+YES / NO
+28. CloudWatch Post-Recovery Validation
+Review:
+CPU
+FreeableMemory
+DatabaseConnections
+IOPS
+Latency
+FreeStorageSpace
+Compare against baseline.
+Example:
+Metric
+Before
+After
+CPU
+35%
+37%
+Connections
+215
+218
+Free Memory
+18 GB
+17.8 GB
+Read Latency
+2 ms
+3 ms
+Write Latency
+3 ms
+4 ms
+The objective is to demonstrate that the database has stabilized after recovery.
+29. Final Application Validation
+Application team confirms:
+Application login:       PASS
+Database connectivity:   PASS
+Business transaction:    PASS
+Error rate:              NORMAL
+Connection pool:         HEALTHY
+Record:
+Final application validation:
+Time = __________
+Validated by = __________
+This timestamp becomes the preferred endpoint for the business RTO calculation.
+30. Final ISCP Evidence Checklist
+[ ] Approved change/ISCP exercise documented
+[ ] Pre-failover RDS screenshot captured
+[ ] Pre-failover Oracle status captured
+[ ] Pre-failover application validation captured
+[ ] CloudWatch baseline captured
+[ ] GoldenGate baseline captured
+[ ] DMS baseline captured
+[ ] Backup status captured
+[ ] Audit baseline captured
+[ ] Failover initiated timestamp recorded
+[ ] RDS failover events captured
+[ ] Post-failover RDS status captured
+[ ] New AZ verified
+[ ] Oracle OPEN/PRIMARY/READ WRITE verified
+[ ] Application connectivity verified
+[ ] Business transaction verified
+[ ] GoldenGate verified
+[ ] DMS verified
+[ ] Scheduler jobs reviewed
+[ ] Backup status reviewed
+[ ] CloudWatch reviewed
+[ ] CloudTrail reviewed
+[ ] Database audit trail reviewed
+[ ] Unauthorized activity assessment completed
+[ ] RTO calculated
+[ ] Stakeholders notified
+[ ] Incident/change record updated
+[ ] Exercise closed
+31. RTO Evidence Table
+Milestone
+Timestamp
+Evidence
+Baseline healthy
+______
+RDS screenshot
+Failover initiated
+______
+Change/incident record
+RDS failover started
+______
+RDS Event
+Primary unavailable
+______
+RDS Event/monitoring
+Standby promoted
+______
+RDS Event
+RDS available
+______
+RDS console
+Oracle OPEN
+______
+TOAD query
+Oracle PRIMARY
+______
+V$DATABASE
+Application connected
+______
+Application validation
+Business transaction successful
+______
+App team
+GoldenGate recovered
+______
+GG evidence
+DMS recovered
+______
+DMS evidence
+Full service restored
+______
+Incident record
+RTO Calculation
+RTO =
+Full Business Service Restoration Time
+-
+Failover Initiation Time
+Example:
+Failover initiated:
+09:15:32
+
+Application/business service restored:
+09:17:05
+
+Measured RTO:
+00:01:33
+32. What to Say During the Exercise
+Opening
+"This ISCP exercise is simulating an AWS Availability Zone outage affecting our production Oracle RDS database. Our objective is to demonstrate our ability to maintain availability through Multi-AZ failover, validate the Oracle database, validate application services, review security activity, and measure our actual RTO."
+Before failover
+"The database is currently healthy. Oracle is open and operating as the primary database. We have captured our database, application, monitoring, replication, backup, and audit baselines."
+Starting failover
+"We are now initiating the approved controlled failover. The RTO clock starts now."
+During recovery
+"RDS has initiated the Multi-AZ failover. We are monitoring RDS events, database availability, application connectivity, and downstream replication."
+Database recovery
+"The database is available. Oracle is OPEN, READ WRITE, and PRIMARY. We are now validating application connectivity."
+Security validation
+"We are reviewing the database audit trail and AWS CloudTrail activity surrounding the incident to confirm that no unauthorized or unexpected activity occurred."
+Final validation
+"The application has successfully reconnected and completed the validation transaction. GoldenGate, DMS, scheduled jobs, backups, and monitoring have also been reviewed."
+RTO
+"The measured recovery time from failover initiation to full business-service restoration was X minutes and X seconds. This is the actual RTO observed during today's exercise."
+Closing
+"The ISCP exercise is complete. Database availability has been restored, downstream services have been validated, security and audit activity has been reviewed, and the recovery timeline has been documented."
+33. Final Exercise Result
+At the end, your incident record should contain something like:
+ISCP EXERCISE RESULT
+
+Scenario:
+AWS Availability Zone Outage
+
+Database:
+Oracle RDS Production
+
+Recovery Mechanism:
+RDS Multi-AZ Failover
+
+Database Recovery:
+SUCCESSFUL
+
+Application Recovery:
+SUCCESSFUL
+
+GoldenGate:
+SUCCESSFUL
+
+DMS:
+SUCCESSFUL
+
+Backup:
+HEALTHY
+
+Security/Audit Review:
+NO UNAUTHORIZED ACTIVITY IDENTIFIED
+
+CloudTrail Review:
+COMPLETED
+
+Measured RTO:
+__________
+
+Target RTO:
+__________
+
+RTO Met:
+YES / NO
+
+Data Integrity:
+VALIDATED
+
+Overall Exercise:
+PASS / FAIL
+
+Lessons Learned:
+________________________________
+________________________________
+________________________________
+34. Key DBA Point
+The most important thing to demonstrate to the ISCP team is that AWS failover is only one part of disaster recovery.
+Your DBA process is:
+Baseline → Detect → Assess → Notify → Failover → Monitor → Oracle Validation → Application Validation → GoldenGate/DMS Validation → Security Review → Backup Review → RTO Measurement → Documentation → Closure
+That is the story you want the auditors/ISCP team to see.
+AWS states that traditional Multi-AZ failovers typically take 60–120 seconds, but the actual time varies with database activity and recovery conditions. Also, after failover, DNS propagation and client reconnection can add additional recovery time. Therefore, your business RTO should be based on your measured end-to-end recovery, not simply the RDS failover duration.
