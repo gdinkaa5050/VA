@@ -1,0 +1,156 @@
+Task Category
+Tasks
+Description
+Applications
+LOE (hrs)
+Frequency
+Database Administration
+Master password rotation
+Rotate RDS master user credentials per policy
+LGY, VALERI, LGA (Oracle/Redshift), VHB RDS
+2
+QUARTERLY
+
+Service account password rotation
+Rotate application/service DB account passwords
+LGY, VALERI, LGA, VHB RDS
+3
+QUARTERLY
+
+DBA/privileged role review
+Review and revoke unnecessary elevated role grants (e.g. DBA role on service accounts)
+LGY, VALERI, LGA
+4
+QUARTERLY
+
+User access provisioning/deprovisioning
+Create, modify, or remove DB user accounts per access requests
+LGY, VALERI, LGA, VHB RDS
+1
+AS NEEDED
+
+Automated backup/snapshot validation
+Verify RDS automated backups and manual snapshots completed successfully
+VALERI, LGY, LGA
+2
+WEEKLY
+
+Restore/DR test
+Restore a snapshot to validate recovery process end-to-end
+VALERI, LGY, LGA
+6
+YEARLY
+
+Multi-AZ / failover monitoring
+Confirm standby health and review failover events
+VALERI, LGY
+1
+WEEKLY
+
+Read replica monitoring
+Monitor replica lag and health where read replicas are used
+LGY, LGA
+2
+DAILY
+
+AWS DMS CDC task monitoring
+Monitor replication task latency and failures
+LGA, VHB RDS
+2
+DAILY
+
+Storage/tablespace growth monitoring
+Track tablespace usage and RDS allocated storage/IOPS trends
+VALERI, LGY, LGA, VHB RDS
+2
+WEEKLY
+
+DBMS_STATS maintenance
+Gather/refresh optimizer statistics on key schemas and tables
+VALERI, LGY, LGA
+3
+WEEKLY
+
+Performance Insights / AWR review
+Review Performance Insights and AWR/ASH for bottlenecks
+VALERI, LGY, LGA
+4
+WEEKLY
+
+Alert log / error log review
+Review Oracle alert logs (via BDUMP directory object) for ORA errors
+VALERI, LGY, LGA, VHB RDS
+1
+DAILY
+
+Scheduler/batch job monitoring
+Monitor DBMS_SCHEDULER and ETL jobs for failures, fix job errors
+VALERI, LGY, LGA
+3
+DAILY
+
+RDS engine patching
+Apply and validate Oracle RDS minor/major version patches
+VALERI, LGY, LGA, VHB RDS
+6
+QUARTERLY
+
+Parameter/option group review
+Review and tune RDS parameter and option groups
+VALERI, LGY, LGA, VHB RDS
+2
+AS NEEDED
+
+Unified audit policy maintenance
+Maintain and validate unified audit policies and trails
+VALERI, LGY
+2
+MONTHLY
+
+Audit trail review
+Review audit logs for unauthorized access/config changes
+VALERI, LGY, LGA
+3
+MONTHLY
+
+DBProtect / DB vulnerability scan support
+Support DB scan engine connectivity and remediate findings
+VALERI, LGY, LGA
+3
+YEARLY
+
+DDL/change request review
+Review developer DDL (partitioning, indexing, LOB storage) for prod risk before promotion
+VALERI, LGY, LGA
+2
+AS NEEDED
+
+Capacity planning
+Track and forecast table/database growth against app team estimates
+VALERI, LGY, LGA
+2
+MONTHLY
+
+AWS support case management
+Open/manage AWS support cases for RDS issues (storage, connectivity, performance)
+VALERI, LGY, LGA, VHB RDS
+2
+AS NEEDED
+
+Redshift cluster monitoring
+Monitor Redshift cluster health, query performance, WLM queues
+LGA
+2
+WEEKLY
+
+Redshift vacuum/analyze
+Run/verify table maintenance (vacuum, analyze) for query performance
+LGA
+2
+WEEKLY
+
+Redshift IAM/access review
+Review IAM roles, pg_group membership, and Data API access
+LGA
+2
+MONTHLY
