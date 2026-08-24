@@ -72,5 +72,9 @@ GROUP BY sql_id, event
 ORDER BY count(*) DESC;
 
 5
+SELECT status, key, sql_id, cpu_time, elapsed_time, status, sql_text 
+FROM v$sql_monitor 
+WHERE status = 'EXECUTING'
+ORDER BY cpu_time DESC;
 
 
