@@ -17,3 +17,60 @@ WHERE owner = 'INTG_MERG'
   AND name = 'SERVICER_NIGHTLY_MONITORING'
   AND UPPER(text) LIKE '%L_FILES%'
 ORDER BY line;
+
+
+
+SELECT 
+    p.spid AS os_pid,
+    s.sid,
+    s.serial#,
+    s.username,
+    s.status,
+    s.osuser,
+    s.machine,
+    s.program,
+    s.sql_id
+FROM v$process p
+JOIN v$session s ON p.addr = s.paddr
+WHERE p.spid IN ('84106', '88572', '9458', '12783', '48999', '65551', '72832', '75203')
+ORDER BY p.spid;
+
+
+SELECT sql_id, sql_fulltext
+FROM v$sql
+WHERE sql_id IN (
+    SELECT s.sql_id
+    FROM v$process p
+    JOIN v$session s ON p.addr = s.paddr
+    WHERE p.spid IN ('84106', '88572', '9458', '12783')
+);
+
+
+
+
+SELECT 
+    s.sid,
+    s.serial#,
+    s.sql_id,
+    s.status,
+    s.last_call_et AS elapsed_seconds,
+    q.cpu_time / 1000000 AS total_cpu_sec,
+    q.executions,
+    q.buffer_gets
+FROM v$session s
+JOIN v$sql q ON s.sql_id = q.sql_id AND s.sql_child_number = q.child_number
+WHERE s.status = 'ACTIVE'
+  AND s.type != 'BACKGROUND'
+ORDER BY s.last_call_et DESC;
+
+
+SELECT sql_id, event, count(*)
+FROM v$active_session_history
+WHERE sample_time > SYSDATE - (15/1440)
+  AND session_state = 'ON CPU'
+GROUP BY sql_id, event
+ORDER BY count(*) DESC;
+
+5
+
+
