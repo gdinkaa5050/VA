@@ -87,3 +87,19 @@ WHERE sql_id = 'ar7whgn8xqrzr';
 Step 3: Prevent Recurrence
 ​Application Side: Trace the process issuing this query (perl@sscam2) and disable the background job/script generating repetitive calls to ar7whgn8xqrzr.
 ​Database Tuning: Rewrite the query to use explicit INNER JOIN ... ON ... syntax rather than NATURAL JOIN, and ensure composite indexes exist on MIDLABEL and the joining key columns of OifDocuments and archivedObjects.
+
+
+Flush 
+
+BEGIN
+  FOR c IN (SELECT address, hash_value FROM v$sqlarea WHERE sql_id = 'ar7whgn8xqrzr') LOOP
+    SYS.DBMS_SHARED_POOL.PURGE(c.address || ',' || c.hash_value, 'C');
+  END LOOP;
+END;
+/
+
+gather statics 
+
+EXEC DBMS_STATS.GATHER_TABLE_STATS('SSCAM2', 'OIFDOC_T', cascade => TRUE);
+EXEC DBMS_STATS.GATHER_TABLE_STATS('SSCAM2', 'ARCHIVEDOBJECTS', cascade => TRUE);
+
