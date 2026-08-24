@@ -1,0 +1,11 @@
+-- 1. Find which directory object the proc uses
+SELECT text FROM dba_source 
+WHERE owner='INTG_MERG' AND name='SERVICER_NIGHTLY_MONITORING' 
+AND line BETWEEN 220 AND 235;
+
+-- 2. Check the directory object's actual path
+SELECT directory_name, directory_path FROM dba_directories 
+WHERE directory_name = '<name from above>';
+
+-- 3. On RDS, verify the path is valid via the utility package
+SELECT * FROM TABLE(rdsadmin.rds_file_util.listdir('<DIRECTORY_NAME>'));
