@@ -58,10 +58,7 @@ FROM dba_scheduler_jobs
 WHERE owner = 'INTG_MERG'
   AND job_name LIKE '%SERVICER_NIGHTLY_MONITORING%';
 
-SELECT job_name, start_date, repeat_interval, last_start_date
-FROM dba_scheduler_jobs
-WHERE owner = 'INTG_MERG'
-  AND job_name LIKE '%SERVICER_NIGHTLY_MONITORING%';
+
 
 SELECT job_name, status, error#, additional_info, actual_start_date, run_duration
 FROM dba_scheduler_job_run_details
