@@ -99,6 +99,11 @@ WHERE owner = 'INTG_MERG'
   AND UPPER(text) LIKE '%WRITE_CSV%'
 ORDER BY name, line;
 
+SELECT job_name, job_action, job_type
+FROM dba_scheduler_jobs
+WHERE owner = 'INTG_MERG'
+  AND job_name = 'SERVICER_NIGHTLY_MONITORING_SCHJOB';
+
 
 №######
 
