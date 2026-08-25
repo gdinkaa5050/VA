@@ -105,6 +105,13 @@ WHERE owner = 'INTG_MERG'
   AND job_name = 'SERVICER_NIGHTLY_MONITORING_SCHJOB';
 
 
+
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND line BETWEEN 124 AND 220
+ORDER BY line;
 №######
 
 SELECT 
