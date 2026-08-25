@@ -34,6 +34,20 @@ WHERE owner = 'INTG_MERG'
   AND line BETWEEN 16 AND 40
 ORDER BY line;
 
+
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND UPPER(text) LIKE '%L_DATE_TAG%'
+  AND line < 20
+ORDER BY line;
+
+
+SELECT * FROM TABLE(rdsadmin.rds_file_util.listdir('VALMON_DIR'))
+WHERE filename LIKE '%08252026%' OR filename LIKE '%ListofdaysandCount%'
+ORDER BY mtime DESC;
+
 №######
 
 SELECT 
