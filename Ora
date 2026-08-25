@@ -48,6 +48,34 @@ SELECT * FROM TABLE(rdsadmin.rds_file_util.listdir('VALMON_DIR'))
 WHERE filename LIKE '%08252026%' OR filename LIKE '%ListofdaysandCount%'
 ORDER BY mtime DESC;
 
+SELECT job_name, program_name, start_date, repeat_interval, enabled, state, last_start_date
+FROM dba_scheduler_jobs
+WHERE owner = 'INTG_MERG'
+  AND (job_name LIKE '%LISTOFDAYS%' OR job_name LIKE '%COUNT%');
+
+SELECT job_name, start_date, repeat_interval, last_start_date
+FROM dba_scheduler_jobs
+WHERE owner = 'INTG_MERG'
+  AND job_name LIKE '%SERVICER_NIGHTLY_MONITORING%';
+
+SELECT job_name, start_date, repeat_interval, last_start_date
+FROM dba_scheduler_jobs
+WHERE owner = 'INTG_MERG'
+  AND job_name LIKE '%SERVICER_NIGHTLY_MONITORING%';
+
+SELECT job_name, status, error#, additional_info, actual_start_date, run_duration
+FROM dba_scheduler_job_run_details
+WHERE owner = 'INTG_MERG'
+  AND job_name LIKE '%LISTOFDAYS%'
+  AND actual_start_date >= TRUNC(SYSDATE)
+ORDER BY actual_start_date DESC;
+
+
+SELECT job_name FROM dba_scheduler_jobs
+WHERE owner = 'INTG_MERG'
+ORDER BY job_name;
+
+
 №######
 
 SELECT 
@@ -82,7 +110,7 @@ SELECT
     s.sid,
     s.serial#,
     s.sql_id,
-    s.status,
+s.status,
     s.last_call_et AS elapsed_seconds,
     q.cpu_time / 1000000 AS total_cpu_sec,
     q.executions,
