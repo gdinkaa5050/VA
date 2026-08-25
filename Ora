@@ -72,6 +72,12 @@ SELECT job_name FROM dba_scheduler_jobs
 WHERE owner = 'INTG_MERG'
 ORDER BY job_name;
 
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND UPPER(text) LIKE '%LISTOFDAYSANDCOUNT%'
+ORDER BY line;
 
 №######
 
