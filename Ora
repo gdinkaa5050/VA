@@ -79,6 +79,13 @@ WHERE owner = 'INTG_MERG'
   AND UPPER(text) LIKE '%LISTOFDAYSANDCOUNT%'
 ORDER BY line;
 
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND UPPER(text) LIKE '%WRITE_CSV%'
+ORDER BY line;
+
 №######
 
 SELECT 
