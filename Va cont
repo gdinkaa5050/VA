@@ -1,0 +1,10 @@
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND line BETWEEN 179 AND 220
+ORDER BY line;
+
+SELECT * FROM TABLE(rdsadmin.rds_file_util.listdir('VALMON_DIR'))
+WHERE mtime >= TRUNC(SYSDATE)
+ORDER BY filename;
