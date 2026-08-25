@@ -26,6 +26,14 @@ WHERE owner = 'INTG_MERG'
 ORDER BY line;
 
 
+#get full block 
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND line BETWEEN 16 AND 40
+ORDER BY line;
+
 №######
 
 SELECT 
