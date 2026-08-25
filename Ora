@@ -18,7 +18,15 @@ WHERE owner = 'INTG_MERG'
   AND UPPER(text) LIKE '%L_FILES%'
 ORDER BY line;
 
+SELECT line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND name = 'SERVICER_NIGHTLY_MONITORING'
+  AND UPPER(text) LIKE '%L_FILES%'
+ORDER BY line;
 
+
+№######
 
 SELECT 
     p.spid AS os_pid,
