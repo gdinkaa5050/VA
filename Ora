@@ -86,6 +86,12 @@ WHERE owner = 'INTG_MERG'
   AND UPPER(text) LIKE '%WRITE_CSV%'
 ORDER BY line;
 
+
+SELECT owner, name, type, line, text
+FROM dba_source
+WHERE owner = 'INTG_MERG'
+  AND UPPER(text) LIKE '%WRITE_CSV%'
+ORDER BY name, line;
 №######
 
 SELECT 
