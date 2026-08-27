@@ -154,3 +154,22 @@ Review IAM roles, pg_group membership, and Data API access
 LGA
 2
 MONTHLY
+
+
+SELECT owner,
+       index_name,
+       table_name,
+       status,
+       index_type
+FROM dba_indexes
+WHERE owner = 'INTG'
+  AND index_name = 'LOAN_NOTES_DATETYPE_IDX';
+
+
+SELECT index_name,
+       column_position,
+       column_expression
+FROM dba_ind_expressions
+WHERE index_owner = 'INTG'
+  AND index_name = 'LOAN_NOTES_DATETYPE_IDX'
+ORDER BY column_position;
