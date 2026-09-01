@@ -32,3 +32,16 @@ FROM dba_audit_trail
 WHERE username = 'LGY_ANALYTICS'
 AND timestamp BETWEEN TIMESTAMP '2026-09-01 04:55:00' AND TIMESTAMP '2026-09-01 17:35:00'
 ORDER BY timestamp;
+
+
+SELECT username, os_username, terminal, timestamp, returncode
+FROM dba_audit_trail
+WHERE username = 'LGY_ANALYTICS'
+AND timestamp BETWEEN TIMESTAMP '2026-09-01 04:58:00' AND TIMESTAMP '2026-09-01 05:02:00'
+ORDER BY timestamp;
+
+SELECT username, os_username, terminal, timestamp, returncode
+FROM dba_audit_trail
+WHERE username = 'LGY_ANALYTICS'
+AND timestamp BETWEEN TIMESTAMP '2026-09-01 17:23:00' AND TIMESTAMP '2026-09-01 17:28:00'
+ORDER BY timestamp;
