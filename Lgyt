@@ -57,3 +57,17 @@ tail -f $ORACLE_HOME/network/log/listener.log
 
 SELECT * FROM dba_priv_audit_opts WHERE audit_option LIKE '%CONNECT%';
 SHOW PARAMETER audit_trail;
+
+
+SELECT resource_name, limit
+FROM dba_profiles
+WHERE profile = (SELECT profile FROM dba_users WHERE username = 'LGY_ANALYTICS')
+AND resource_name = 'INACTIVE_ACCOUNT_TIME';
+
+SELECT dbusername, event_timestamp, return_code
+FROM unified_audit_trail
+WHERE dbusername = 'LGY_ANALYTICS'
+AND return_code = 0
+ORDER BY event_timestamp DESC
+FETCH FIRST 10 ROWS ONLY;
+
