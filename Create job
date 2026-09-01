@@ -1,0 +1,66 @@
+--------------------------------------------------------------------
+-- 1. Logging table
+--------------------------------------------------------------------
+CREATE TABLE oracle.valeri_profile_reset_log (
+  run_date   TIMESTAMP DEFAULT SYSTIMESTAMP,
+  status     VARCHAR2(20),
+  error_msg  VARCHAR2(4000)
+);
+
+--------------------------------------------------------------------
+-- 2. Procedure to reset the valeri profile
+--------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE oracle.reset_valeri_profile
+IS
+BEGIN
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT logical_reads_per_session DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT composite_limit DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT connect_time DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT cpu_per_call DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT idle_time DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT password_grace_time DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT FAILED_LOGIN_ATTEMPTS 5';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT PASSWORD_REUSE_MAX 25';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT PASSWORD_LIFE_TIME 365';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT password_reuse_time DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT password_lock_time DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT inactive_account_time 60';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT logical_reads_per_call DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT private_sga DEFAULT';
+  EXECUTE IMMEDIATE 'ALTER PROFILE valeri LIMIT PASSWORD_VERIFY_FUNCTION VERIFY_FUNCTION_PROD';
+
+  INSERT INTO oracle.valeri_profile_reset_log (status, error_msg)
+  VALUES ('SUCCESS', NULL);
+  COMMIT;
+
+EXCEPTION
+  WHEN OTHERS THEN
+    INSERT INTO oracle.valeri_profile_reset_log (status, error_msg)
+    VALUES ('FAILED', SQLERRM);
+    COMMIT;
+    RAISE;
+END;
+/
+
+--------------------------------------------------------------------
+-- 3. Scheduler job - runs daily at 00:05, owned by oracle
+--------------------------------------------------------------------
+BEGIN
+  DBMS_SCHEDULER.CREATE_JOB (
+    job_name        => 'oracle.RESET_VALERI_PROFILE_JOB',
+    job_type        => 'STORED_PROCEDURE',
+    job_action      => 'oracle.RESET_VALERI_PROFILE',
+    start_date      => TRUNC(SYSDATE) + 1,
+    repeat_interval => 'FREQ=DAILY; BYHOUR=0; BYMINUTE=5; BYSECOND=0',
+    enabled         => TRUE,
+    comments        => 'Nightly reset of valeri profile limits to counter deployment overrides'
+  );
+END;
+/
+
+--------------------------------------------------------------------
+-- 4. Verify job registration and ownership
+--------------------------------------------------------------------
+SELECT owner, job_name, enabled, state, next_run_date, repeat_interval
+FROM   dba_scheduler_jobs
+WHERE  job_name = 'RESET_VALERI_PROFILE_JOB';
