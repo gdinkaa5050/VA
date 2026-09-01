@@ -84,3 +84,25 @@ WHERE credential_name = '<credential_name_from_above>';
 SELECT owner_name, job_name, operation, job_mode, state
 FROM dba_datapump_jobs
 WHERE job_name LIKE '%WEBLGY%';
+
+
+
+###
+SELECT username, account_status, lock_date, expiry_date, profile
+FROM dba_users
+WHERE username = 'SRC_WEBLGY';
+
+
+SELECT resource_name, limit
+FROM dba_profiles
+WHERE profile = (SELECT profile FROM dba_users WHERE username = 'SRC_WEBLGY');
+
+
+SELECT username, os_username, terminal, timestamp, returncode
+FROM dba_audit_trail
+WHERE username = 'SRC_WEBLGY'
+ORDER BY timestamp DESC
+FETCH FIRST 20 ROWS ONLY;
+
+
+
