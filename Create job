@@ -64,3 +64,23 @@ END;
 SELECT owner, job_name, enabled, state, next_run_date, repeat_interval
 FROM   dba_scheduler_jobs
 WHERE  job_name = 'RESET_VALERI_PROFILE_JOB';
+
+
+
+
+
+
+SELECT job_name, owner, job_action, credential_name
+FROM dba_scheduler_jobs
+WHERE job_name LIKE '%WEBLGY%' OR job_name LIKE '%DATAPUMP%';
+
+
+
+SELECT credential_name, username
+FROM dba_credentials
+WHERE credential_name = '<credential_name_from_above>';
+
+
+SELECT owner_name, job_name, operation, job_mode, state
+FROM dba_datapump_jobs
+WHERE job_name LIKE '%WEBLGY%';
