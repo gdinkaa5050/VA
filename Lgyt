@@ -45,3 +45,15 @@ FROM dba_audit_trail
 WHERE username = 'LGY_ANALYTICS'
 AND timestamp BETWEEN TIMESTAMP '2026-09-01 17:23:00' AND TIMESTAMP '2026-09-01 17:28:00'
 ORDER BY timestamp;
+
+
+SELECT dbusername, os_username, client_terminal_name, event_timestamp, return_code
+FROM unified_audit_trail
+WHERE dbusername = 'LGY_ANALYTICS'
+AND event_timestamp BETWEEN TIMESTAMP '2026-09-01 04:58:00' AND TIMESTAMP '2026-09-01 05:02:00'
+ORDER BY event_timestamp;
+
+tail -f $ORACLE_HOME/network/log/listener.log
+
+SELECT * FROM dba_priv_audit_opts WHERE audit_option LIKE '%CONNECT%';
+SHOW PARAMETER audit_trail;
