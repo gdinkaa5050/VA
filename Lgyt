@@ -18,3 +18,17 @@ FROM dba_audit_trail
 WHERE username = 'LGY_ANALYTICS'
 AND timestamp BETWEEN TIMESTAMP '2026-09-01 04:55:00' AND TIMESTAMP '2026-09-01 17:35:00'
 ORDER BY timestamp;
+
+
+
+SELECT resource_name, TO_CHAR(limit) AS limit_raw
+FROM dba_profiles
+WHERE profile = (SELECT profile FROM dba_users WHERE username = 'LGY_ANALYTICS')
+AND resource_name = 'PASSWORD_LOCK_TIME';
+
+
+SELECT username, os_username, terminal, timestamp, returncode
+FROM dba_audit_trail
+WHERE username = 'LGY_ANALYTICS'
+AND timestamp BETWEEN TIMESTAMP '2026-09-01 04:55:00' AND TIMESTAMP '2026-09-01 17:35:00'
+ORDER BY timestamp;
