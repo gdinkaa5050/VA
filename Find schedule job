@@ -1,4 +1,4 @@
--- ============================================================
+2-- ============================================================
 -- Investigating stale LOAN_BORROWER_DTL table (Oracle DB)
 -- ============================================================
 
@@ -103,3 +103,61 @@ SELECT object_name, object_type, created, last_ddl_time, status
 FROM dba_objects
 WHERE object_name IN ('LOAN_BORROWER_ETL_PKG', 'LOAD_LOAN_HISTORY_PKG_LGYA1317599', 'ETL_API_PKG')
 ORDER BY last_ddl_time DESC;
+
+
+
+-- ============================================================
+-- Step 8: See the REST of load_loan_borrower_dtl's logic 
+-- (the IF block was cut off — need to see if/how it actually loads)
+-- ============================================================
+SELECT text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'LOAN_BORROWER_ETL_PKG'
+  AND type = 'PACKAGE BODY'
+ORDER BY line;
+-- (scroll further this time — look for the actual INSERT/MERGE 
+-- statement and what condition guards it)
+
+
+-- ============================================================
+-- Step 9: Check if ETL_API_PKG.RUN_ETL actually calls 
+-- load_loan_borrower_dtl, and under what condition
+-- (this was modified AFTER the borrower package — likely culprit
+-- if the call was removed, reordered, or gated)
+-- ============================================================
+SELECT text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'ETL_API_PKG'
+  AND type = 'PACKAGE BODY'
+ORDER BY line;
+
+
+-- ============================================================
+-- Step 10: Check if DAILY_ETL is genuinely stuck right now
+-- (compare start time to current time — long-running/hung job?)
+-- ============================================================
+SELECT job_name, state, last_start_date, 
+       SYSDATE AS current_time,
+       (SYSDATE - CAST(last_start_date AS DATE)) * 24 * 60 AS minutes_running
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL';
+
+-- Check currently running job details/session info (if it's hung)
+SELECT r.job_name, r.session_id, r.running_instance, r.elapsed_time, r.cpu_used
+FROM dba_scheduler_running_jobs r
+WHERE r.job_name = 'DAILY_ETL';
+
+
+-- ============================================================
+-- Step 11: Check the ETL log table for actual success/failure 
+-- records tied to LOAN_BORROWER_DTL loads (this package clearly
+-- writes to ETL.ETL_LOG based on the source)
+-- ============================================================
+SELECT *
+FROM ETL.ETL_LOG
+WHERE UPPER(subject_area) LIKE '%LOAN_BORROWER%'
+   OR UPPER(source_system) LIKE '%LOAN%'
+ORDER BY load_date DESC  -- adjust column name once you see actual structure
+FETCH FIRST 20 ROWS ONLY;
