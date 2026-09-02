@@ -245,3 +245,26 @@ SELECT column_name, data_type
 FROM dba_tab_columns
 WHERE owner = 'SRC_SF' AND table_name = 'SF_VALERI_VA_LOAN'
 ORDER BY column_id;
+
+
+
+dddddd 
+-- ============================================================
+-- Step N: Check src_sf.sf_valeri_va_loan freshness using its 
+-- real Salesforce sync columns
+-- ============================================================
+SELECT MAX(systemmodstamp) AS latest_systemmodstamp,
+       MAX(lastmodifieddate) AS latest_lastmodified,
+       MAX(createddate) AS latest_created,
+       COUNT(*) AS total_rows
+FROM src_sf.sf_valeri_va_loan;
+
+
+-- ============================================================
+-- Step O: Re-check src_weblgy.mtge_loan freshness — try other 
+-- date columns since last_valeri_update returned NULL
+-- (prcsd_dt and rcvd_dt were seen earlier in the column list)
+-- ============================================================
+SELECT MAX(prcsd_dt) AS latest_prcsd, MAX(rcvd_dt) AS latest_rcvd,
+       COUNT(*) AS total_rows
+FROM src_weblgy.mtge_loan;
