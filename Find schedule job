@@ -161,3 +161,51 @@ WHERE UPPER(subject_area) LIKE '%LOAN_BORROWER%'
    OR UPPER(source_system) LIKE '%LOAN%'
 ORDER BY load_date DESC  -- adjust column name once you see actual structure
 FETCH FIRST 20 ROWS ONLY;
+
+
+
+-- ============================================================
+-- Step 12: MOST IMPORTANT — check if loan_snapshots itself is 
+-- stale. If MAX(as_of_date) stops at July, that's your root cause:
+-- upstream snapshot data isn't arriving, so the borrower table 
+-- just keeps reloading the same July data every month.
+-- ============================================================
+SELECT MAX(as_of_date) AS latest_snapshot_date, COUNT(*) AS total_snapshots
+FROM loan_snapshots;
+
+-- Check the trend/history of when snapshots were actually loaded
+SELECT as_of_date, COUNT(*) AS row_count
+FROM loan_snapshots
+GROUP BY as_of_date
+ORDER BY as_of_date DESC
+FETCH FIRST 10 ROWS ONLY;
+
+
+-- ============================================================
+-- Step 13: Properly filter ETL_LOG for loan_borrower_dtl specifically
+-- (v_sub_area constant = 'load data to table loan_borrower_dtl' —
+-- use that exact string, and order by start_time so we see the 
+-- REAL recent history, not arbitrary old rows)
+-- ============================================================
+SELECT batch_id, session_id, source_system, subject_area, 
+       batch_status, start_time, end_time
+FROM ETL.ETL_LOG
+WHERE subject_area = 'load data to table loan_borrower_dtl'
+ORDER BY start_time DESC
+FETCH FIRST 20 ROWS ONLY;
+
+
+-- ============================================================
+-- Step 14: Check if today's DAILY_ETL run (session 946) is stuck 
+-- on a specific step — look for locks/waits it's holding or 
+-- blocked on, since 2.5+ hrs with real CPU use is worth confirming
+-- it's not looping or blocked on a lock
+-- ============================================================
+SELECT sid, serial#, event, wait_class, seconds_in_wait, blocking_session
+FROM v$session
+WHERE sid = 946;
+
+-- See what SQL it's currently executing
+SELECT sql_text
+FROM v$sql
+WHERE sql_id = (SELECT sql_id FROM v$session WHERE sid = 946);
