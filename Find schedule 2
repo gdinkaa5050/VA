@@ -196,3 +196,33 @@ WHERE subject_area IN ('intg_datapump_pkg.daily_refresh', 'weblgy_datapump_pkg.w
    OR source_system IN ('VALERIR INTG', 'WEBLGY')
 ORDER BY start_time DESC
 FETCH FIRST 20 ROWS ONLY;
+
+needed
+-- ============================================================
+-- Step I: Find real column names for src_weblgy.mtge_loan 
+-- (created_date doesn't exist there)
+-- ============================================================
+SELECT column_name, data_type
+FROM dba_tab_columns
+WHERE owner = 'SRC_WEBLGY' AND table_name = 'MTGE_LOAN'
+ORDER BY column_id;
+
+
+-- ============================================================
+-- Step J: Check actual row-level freshness for all three driving 
+-- source tables using whatever date column actually exists
+-- ============================================================
+-- (rerun once Step I gives the real column name)
+SELECT MAX(created_date) AS latest, COUNT(*) AS total_rows FROM src_valerir.loan;
+SELECT MAX(last_updated_date) AS latest, COUNT(*) AS total_rows FROM src_sf.sf_valeri_va_loan;
+
+
+-- ============================================================
+-- Step K: Look closer at the anomalous 9/1 WEBLGY run (batch 10309, 
+-- 3+ hrs vs. seconds for prior months) — check row/error counts
+-- ============================================================
+SELECT batch_id, source_count, target_count, rows_success, rows_error,
+       insert_count, update_count, delete_count, description
+FROM ETL.ETL_LOG
+WHERE batch_id IN (10309, 10303, 10205, 10107, 10012)
+ORDER BY batch_id DESC;
