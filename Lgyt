@@ -72,3 +72,15 @@ ORDER BY event_timestamp DESC
 FETCH FIRST 10 ROWS ONLY;
 
 LGY_ANALYTICS was locked due to INACTIVE_ACCOUNT_TIME (30 days) being exceeded — the account went unused for roughly 62 days (no runs in August) before SRC_WEBLGY_DATAPUMP_JOB attempted to reconnect on September 1st.
+
+
+-- On the database that owns SRC_WEBLGY_DATAPUMP_JOB
+SELECT job_name, log_date, status, additional_info
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'SRC_WEBLGY_DATAPUMP_JOB'
+AND log_date BETWEEN TIMESTAMP '2026-07-15 00:00:00' AND TIMESTAMP '2026-09-02 00:00:00'
+ORDER BY log_date;
+
+SELECT job_name, enabled, state, repeat_interval, last_start_date, next_run_date
+FROM dba_scheduler_jobs
+WHERE job_name = 'SRC_WEBLGY_DATAPUMP_JOB';
