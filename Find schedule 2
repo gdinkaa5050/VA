@@ -79,3 +79,42 @@ WHERE subject_area IN (
      )
   AND start_time >= DATE '2026-08-28'
 ORDER BY start_time DESC;
+
+
+
+###
+-- ============================================================
+-- Step D: Find real column names in the three related snapshot 
+-- tables (one of these lacks AS_OF_DATE — find its actual date column)
+-- ============================================================
+SELECT table_name, column_name, data_type
+FROM dba_tab_columns
+WHERE owner = 'ANALYTICS'
+  AND table_name IN ('LOAN_SNAPSHOTS_WALLSTREET', 'LOAN_SNAPSHOTS_REDEFAULTS', 'LOAN_SNAPSHOTS_STAGING')
+ORDER BY table_name, column_id;
+
+
+-- ============================================================
+-- Step E: Find the REAL subject_area values actually logged 
+-- recently (our guessed strings didn't match anything)
+-- ============================================================
+SELECT DISTINCT subject_area, source_system
+FROM ETL.ETL_LOG
+WHERE start_time >= DATE '2026-08-28'
+ORDER BY subject_area;
+
+
+-- ============================================================
+-- Step F: MOST IMPORTANT — see the rest of load_loan_borrower_dtl's
+-- INSERT statement (the SELECT/FROM/WHERE part after the column 
+-- list) to find out which snapshot table/view it actually reads 
+-- from, and whether there's a date filter hardcoded or pointing 
+-- at a stale source
+-- ============================================================
+SELECT line, text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'LOAN_BORROWER_ETL_PKG'
+  AND type = 'PACKAGE BODY'
+  AND line BETWEEN 60 AND 150   -- adjust range to capture past the column list into the SELECT/FROM/WHERE
+ORDER BY line;
