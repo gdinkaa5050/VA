@@ -1,11 +1,41 @@
-SELECT j.name, j.enabled, h.run_date, h.run_time, h.run_status, h.message
-FROM msdb.dbo.sysjobs j
-JOIN msdb.dbo.sysjobhistory h ON j.job_id = h.job_id
-WHERE j.name LIKE '%loan%' OR j.name LIKE '%borrower%'
-ORDER BY h.run_date DESC, h.run_time DESC;
+-- ============================================================
+-- Investigating stale LOAN_BORROWER_DTL table (Oracle DB)
+-- ============================================================
 
--- SQL Server: find stored procs/views referencing the table
-SELECT DISTINCT o.name, o.type_desc
-FROM sys.sql_expression_dependencies d
-JOIN sys.objects o ON d.referencing_id = o.object_id
-WHERE d.referenced_entity_name = 'LOAN_BORROWER_DTL';
+-- STEP 1: Confirm the table exists and find its actual owner/schema
+-- (Run this FIRST — the result tells you what schema to plug into
+-- the dependency query below)
+SELECT owner, table_name 
+FROM dba_tables 
+WHERE table_name = 'LOAN_BORROWER_DTL';
+
+-- If nothing comes back, try a broader search in case of naming variants
+SELECT owner, table_name 
+FROM dba_tables 
+WHERE table_name LIKE '%LOAN_BORROWER%';
+
+
+-- STEP 2: Find scheduled jobs that might load this table
+-- (modern Oracle Scheduler)
+SELECT job_name, enabled, state, last_start_date, last_run_duration, next_run_date
+FROM dba_scheduler_jobs
+WHERE LOWER(job_name) LIKE '%loan%' OR LOWER(job_name) LIKE '%borrower%';
+
+-- Check job run history / failures for those jobs
+SELECT job_name, status, error#, actual_start_date, run_duration, additional_info
+FROM dba_scheduler_job_run_details
+WHERE LOWER(job_name) LIKE '%loan%' OR LOWER(job_name) LIKE '%borrower%'
+ORDER BY actual_start_date DESC;
+
+-- If this Oracle instance uses the OLDER legacy job scheduler instead
+SELECT job, what, last_date, next_date, broken
+FROM dba_jobs
+WHERE LOWER(what) LIKE '%loan%' OR LOWER(what) LIKE '%borrower%';
+
+
+-- STEP 3: Find procedures/views/packages that reference the table
+-- (add "AND owner = 'YOUR_SCHEMA'" once you know it from Step 1)
+SELECT owner, name, type
+FROM dba_dependencies
+WHERE referenced_name = 'LOAN_BORROWER_DTL'
+ORDER BY owner, name;
