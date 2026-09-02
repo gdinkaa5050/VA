@@ -71,3 +71,4 @@ AND return_code = 0
 ORDER BY event_timestamp DESC
 FETCH FIRST 10 ROWS ONLY;
 
+LGY_ANALYTICS was locked due to INACTIVE_ACCOUNT_TIME (30 days) being exceeded — the account went unused for roughly 62 days (no runs in August) before SRC_WEBLGY_DATAPUMP_JOB attempted to reconnect on September 1st.
