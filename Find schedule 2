@@ -34,3 +34,48 @@ WHERE job_name = 'DAILY_ETL';
 Could you clarify a few things for us?
 ​First, does the table population depend on any SRC_WEBLGY tables? If it does, we suspect it might be related to the inactive_account_time setting locking the LGY_ANALYTICS@LGYPRDT account.
 ​Also, how should we go about loading the August data, and could you explain what the CLEAR_ETL procedures do?
+
+
+
+-- ============================================================
+-- Step A: Confirm loan_snapshots is genuinely stale (correct owner)
+-- ============================================================
+SELECT MAX(as_of_date) AS latest_snapshot_date, COUNT(*) AS total_rows
+FROM ANALYTICS.LOAN_SNAPSHOTS;
+
+SELECT as_of_date, COUNT(*) AS row_count
+FROM ANALYTICS.LOAN_SNAPSHOTS
+GROUP BY as_of_date
+ORDER BY as_of_date DESC
+FETCH FIRST 10 ROWS ONLY;
+
+
+-- ============================================================
+-- Step B: Check the related snapshot tables too — maybe ONE of 
+-- these three sources is the one that stopped updating
+-- ============================================================
+SELECT 'WALLSTREET' AS tbl, MAX(as_of_date) AS latest_date FROM ANALYTICS.LOAN_SNAPSHOTS_WALLSTREET
+UNION ALL
+SELECT 'REDEFAULTS', MAX(as_of_date) FROM ANALYTICS.LOAN_SNAPSHOTS_REDEFAULTS
+UNION ALL
+SELECT 'STAGING', MAX(as_of_date) FROM ANALYTICS.LOAN_SNAPSHOTS_STAGING;
+
+
+-- ============================================================
+-- Step C: Now pull the REAL ETL_LOG history for the snapshot 
+-- steps, using correct column names, and specifically compare 
+-- durations/status right around Aug 31 -> Sep 1 (when the 
+-- runtime exploded)
+-- ============================================================
+SELECT batch_id, source_system, subject_area, batch_status,
+       start_time, end_time,
+       (end_time - start_time) AS duration
+FROM ETL.ETL_LOG
+WHERE subject_area IN (
+        'load_loan_snapshot_pkg.load_loan_snapshots_redefaults',
+        'load_loan_snapshot_pkg.load_loan_snapshot',
+        'loan_snapshots_wallstreet_pkg.load_loan_snapshots_wallstreet',
+        'load data to table loan_borrower_dtl'
+     )
+  AND start_time >= DATE '2026-08-28'
+ORDER BY start_time DESC;
