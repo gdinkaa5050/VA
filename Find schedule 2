@@ -1,47 +1,31 @@
 -- ============================================================
--- Step 1: Confirm loan_snapshots is actually stale
--- (this is the upstream table load_loan_borrower_dtl depends on)
+-- Fix 1: Find the actual owner/name of the snapshots table
 -- ============================================================
-SELECT MAX(as_of_date) AS latest_snapshot_date, COUNT(*) AS total_rows
-FROM loan_snapshots;
-
--- See the trend of when snapshots actually arrived
-SELECT as_of_date, COUNT(*) AS row_count
-FROM loan_snapshots
-GROUP BY as_of_date
-ORDER BY as_of_date DESC
-FETCH FIRST 10 ROWS ONLY;
+SELECT owner, table_name 
+FROM dba_tables 
+WHERE table_name LIKE '%SNAPSHOT%';
 
 
 -- ============================================================
--- Step 2: Check ETL_LOG for errors on the THREE snapshot-loading 
--- steps that run before load_loan_borrower_dtl in RUN_ETL:
---   - load_loan_snapshot_pkg.load_loan_snapshots_redefaults
---   - load_loan_snapshot_pkg.load_loan_snapshot  
---   - loan_snapshots_wallstreet_pkg.load_loan_snapshots_wallstreet
+-- Fix 2: See ETL_LOG's real column structure before filtering on it
 -- ============================================================
-SELECT batch_id, source_system, subject_area, batch_status, 
-       start_time, end_time
-FROM ETL.ETL_LOG
-WHERE p_module = 'etl_api_pkg.run_etl'  -- adjust column name to match actual schema
-   OR subject_area IN (
-        'load_loan_snapshot_pkg.load_loan_snapshots_redefaults',
-        'load_loan_snapshot_pkg.load_loan_snapshot',
-        'loan_snapshots_wallstreet_pkg.load_loan_snapshots_wallstreet'
-     )
-ORDER BY start_time DESC
-FETCH FIRST 30 ROWS ONLY;
+SELECT column_name, data_type 
+FROM dba_tab_columns 
+WHERE owner = 'ETL' AND table_name = 'ETL_LOG'
+ORDER BY column_id;
 
 
 -- ============================================================
--- Step 3: Check today's DAILY_ETL run specifically — is it 
--- currently stuck INSIDE one of these snapshot loaders?
--- (This ties back to the 2.5+ hr running job from earlier)
+-- Fix 3: Session 946 is gone — check if DAILY_ETL finished 
+-- (and how) since our last check
 -- ============================================================
-SELECT sql_text
-FROM v$sql
-WHERE sql_id = (SELECT sql_id FROM v$session WHERE sid = 946);
+SELECT job_name, status, error#, actual_start_date, run_duration, additional_info
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'DAILY_ETL'
+ORDER BY actual_start_date DESC
+FETCH FIRST 5 ROWS ONLY;
 
-SELECT event, wait_class, seconds_in_wait
-FROM v$session
-WHERE sid = 946;
+-- Confirm current state (RUNNING vs SCHEDULED/DISABLED)
+SELECT job_name, state, last_start_date, next_run_date
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL';
