@@ -84,3 +84,46 @@ ORDER BY log_date;
 SELECT job_name, enabled, state, repeat_interval, last_start_date, next_run_date
 FROM dba_scheduler_jobs
 WHERE job_name = 'SRC_WEBLGY_DATAPUMP_JOB';
+
+
+
+
+Since the job only runs monthly
+This is actually the most important insight: since it's a monthly job (not daily), and INACTIVE_ACCOUNT_TIME was set to 30 days, this account was mathematically guaranteed to lock every single month — a 30-day gate on an account that's only used every ~30 days will occasionally tip over the threshold depending on exact day counts (28 vs 31-day months, leap years, etc.). Raising it to 90 gives comfortable headroom above the monthly cadence, so this shouldn't recur.
+Summary for your ticket/documentation
+Root cause: LGY_ANALYTICS (remote account via WEBLGY_OAR_DB db link) has INACTIVE_ACCOUNT_TIME = 30 days, but SRC_WEBLGY_DATAPUMP_JOB only connects monthly — a cadence too close to the threshold, causing intermittent auto-locks.
+Fix applied: Raised INACTIVE_ACCOUNT_TIME to 90 days on the remote profile.
+Verification: Job ran successfully 3 times on 9/1/2026 after the fix, including two runs after the profile change.
+Want me to draft the final Jira ticket now with this full root-cause writeup?
+
+
+This pulls every run of every job from these three owners for the entire current day — it doesn't filter by success/failure, and it doesn't dedupe by "latest run only." So today's email digest will include:
+The 05:00:03 AM run → SUCCEEDED
+Any earlier failed attempt logged before that (if one exists in dba_scheduler_job_run_details for today)
+The 5:26 PM and 8:54 PM successful runs too
+All of these get concatenated into the same email, which is why you're still seeing the lock error mixed in — it's not a live/current problem, it's a historical log entry for today that the script is including in its digest, alongside the successful runs.
+
+
+
+
+
+CURSOR check_sf IS
+  SELECT job_name, output
+  FROM dba_scheduler_job_run_details
+  WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY', 'ANALYTICS')
+  AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
+
+
+
+SELECT job_name, actual_start_date, status
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'SRC_WEBLGY_DATAPUMP_JOB'
+AND TRUNC(actual_start_date) = TRUNC(SYSDATE)
+ORDER BY actual_start_date;
+
+
+
+
+
+
+
