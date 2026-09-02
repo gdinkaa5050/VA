@@ -29,3 +29,8 @@ FETCH FIRST 5 ROWS ONLY;
 SELECT job_name, state, last_start_date, next_run_date
 FROM dba_scheduler_jobs
 WHERE job_name = 'DAILY_ETL';
+
+
+Could you clarify a few things for us?
+​First, does the table population depend on any SRC_WEBLGY tables? If it does, we suspect it might be related to the inactive_account_time setting locking the LGY_ANALYTICS@LGYPRDT account.
+​Also, how should we go about loading the August data, and could you explain what the CLEAR_ETL procedures do?
