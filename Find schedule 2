@@ -118,3 +118,32 @@ WHERE owner = 'ANALYTICS'
   AND type = 'PACKAGE BODY'
   AND line BETWEEN 60 AND 150   -- adjust range to capture past the column list into the SELECT/FROM/WHERE
 ORDER BY line;
+
+
+
+rrrrr
+-- ============================================================
+-- Fix 1: Correct snapshot staleness check using REAL columns 
+-- per table
+-- ============================================================
+SELECT 'WALLSTREET' AS tbl, MAX(as_of_date) AS latest_date FROM ANALYTICS.LOAN_SNAPSHOTS_WALLSTREET
+UNION ALL
+SELECT 'STAGING', MAX(as_of_date) FROM ANALYTICS.LOAN_SNAPSHOTS_STAGING
+UNION ALL
+SELECT 'REDEFAULTS (redefault_date)', MAX(redefault_date) FROM ANALYTICS.LOAN_SNAPSHOTS_REDEFAULTS
+UNION ALL
+SELECT 'REDEFAULTS (dclr_date)', MAX(dclr_date) FROM ANALYTICS.LOAN_SNAPSHOTS_REDEFAULTS;
+
+
+-- ============================================================
+-- Fix 2: Keep pulling source PAST the column list (100+ columns) 
+-- to reach the actual SELECT/FROM/WHERE — this is the part that 
+-- actually determines what data gets loaded
+-- ============================================================
+SELECT line, text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'LOAN_BORROWER_ETL_PKG'
+  AND type = 'PACKAGE BODY'
+  AND line BETWEEN 150 AND 280
+ORDER BY line;
