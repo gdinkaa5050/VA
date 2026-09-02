@@ -39,3 +39,67 @@ SELECT owner, name, type
 FROM dba_dependencies
 WHERE referenced_name = 'LOAN_BORROWER_DTL'
 ORDER BY owner, name;
+
+
+
+-- ============================================================
+-- Step 4: Find the job(s) that actually call LOAN_BORROWER_ETL_PKG
+-- (search job_action text instead of job name — the job name
+-- might not match "loan"/"borrower" at all)
+-- ============================================================
+SELECT job_name, enabled, state, last_start_date, last_run_duration, 
+       next_run_date, job_action
+FROM dba_scheduler_jobs
+WHERE UPPER(job_action) LIKE '%LOAN_BORROWER_ETL_PKG%'
+   OR UPPER(job_action) LIKE '%ETL_API_PKG%';
+
+-- Check its run history / errors specifically
+SELECT job_name, status, error#, actual_start_date, run_duration, additional_info
+FROM dba_scheduler_job_run_details
+WHERE UPPER(job_name) IN (
+    SELECT job_name FROM dba_scheduler_jobs
+    WHERE UPPER(job_action) LIKE '%LOAN_BORROWER_ETL_PKG%'
+)
+ORDER BY actual_start_date DESC;
+
+
+-- ============================================================
+-- Step 5: Check what LOAN_RECIDIVISM_ETL actually does before
+-- ruling it out — confirm whether it's unrelated or a real dependency
+-- ============================================================
+SELECT job_name, job_action, job_type, comments
+FROM dba_scheduler_jobs
+WHERE job_name = 'LOAN_RECIDIVISM_ETL';
+
+
+-- ============================================================
+-- Step 6: Pull the source of LOAN_BORROWER_ETL_PKG to see the load
+-- logic and confirm what it references (e.g. does it call the
+-- suspicious LOAD_LOAN_HISTORY_PKG_LGYA1317599 variant?)
+-- ============================================================
+SELECT text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'LOAN_BORROWER_ETL_PKG'
+  AND type = 'PACKAGE BODY'
+ORDER BY line;
+
+
+-- ============================================================
+-- Step 7: Investigate the oddly-named package — check if it's a
+-- one-off patch (ticket number suffix) that may have replaced or
+-- broken the original load chain
+-- ============================================================
+SELECT text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'LOAD_LOAN_HISTORY_PKG_LGYA1317599'
+  AND type = 'PACKAGE BODY'
+ORDER BY line;
+
+-- Check when this package was created/last modified vs. the
+-- original — a recent compile date near July could explain the cutoff
+SELECT object_name, object_type, created, last_ddl_time, status
+FROM dba_objects
+WHERE object_name IN ('LOAN_BORROWER_ETL_PKG', 'LOAD_LOAN_HISTORY_PKG_LGYA1317599', 'ETL_API_PKG')
+ORDER BY last_ddl_time DESC;
