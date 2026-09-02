@@ -147,3 +147,24 @@ WHERE owner = 'ANALYTICS'
   AND type = 'PACKAGE BODY'
   AND line BETWEEN 150 AND 280
 ORDER BY line;
+
+
+
+daddy
+-- ============================================================
+-- Find every line that mentions FROM, JOIN, or "snapshot" in the 
+-- procedure — jumps straight to the data source instead of 
+-- scrolling through 100+ SELECT columns
+-- ============================================================
+SELECT line, text
+FROM dba_source
+WHERE owner = 'ANALYTICS'
+  AND name = 'LOAN_BORROWER_ETL_PKG'
+  AND type = 'PACKAGE BODY'
+  AND (
+        UPPER(text) LIKE '%FROM %'
+     OR UPPER(text) LIKE '%JOIN %'
+     OR UPPER(text) LIKE '%SNAPSHOT%'
+     OR UPPER(text) LIKE '%WHERE %'
+      )
+ORDER BY line;
