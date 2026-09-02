@@ -226,3 +226,22 @@ SELECT batch_id, source_count, target_count, rows_success, rows_error,
 FROM ETL.ETL_LOG
 WHERE batch_id IN (10309, 10303, 10205, 10107, 10012)
 ORDER BY batch_id DESC;
+
+
+vvvvvv
+-- ============================================================
+-- Step L: Check src_weblgy.mtge_loan freshness using the real 
+-- column name found
+-- ============================================================
+SELECT MAX(last_valeri_update) AS latest, COUNT(*) AS total_rows
+FROM src_weblgy.mtge_loan;
+
+
+-- ============================================================
+-- Step M: Find real column names for src_sf.sf_valeri_va_loan 
+-- (last_updated_date doesn't exist there)
+-- ============================================================
+SELECT column_name, data_type
+FROM dba_tab_columns
+WHERE owner = 'SRC_SF' AND table_name = 'SF_VALERI_VA_LOAN'
+ORDER BY column_id;
