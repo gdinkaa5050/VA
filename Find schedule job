@@ -1,0 +1,11 @@
+SELECT j.name, j.enabled, h.run_date, h.run_time, h.run_status, h.message
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.sysjobhistory h ON j.job_id = h.job_id
+WHERE j.name LIKE '%loan%' OR j.name LIKE '%borrower%'
+ORDER BY h.run_date DESC, h.run_time DESC;
+
+-- SQL Server: find stored procs/views referencing the table
+SELECT DISTINCT o.name, o.type_desc
+FROM sys.sql_expression_dependencies d
+JOIN sys.objects o ON d.referencing_id = o.object_id
+WHERE d.referenced_entity_name = 'LOAN_BORROWER_DTL';
