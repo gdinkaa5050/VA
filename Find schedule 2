@@ -168,3 +168,31 @@ WHERE owner = 'ANALYTICS'
      OR UPPER(text) LIKE '%WHERE %'
       )
 ORDER BY line;
+
+
+rrrr
+-- ============================================================
+-- Step G: THE likely root cause — check freshness of the actual 
+-- DRIVING source tables (not loan_snapshots)
+-- ============================================================
+SELECT MAX(created_date) AS latest, COUNT(*) AS total_rows
+FROM src_valerir.loan;
+
+SELECT MAX(last_updated_date) AS latest, COUNT(*) AS total_rows
+FROM src_sf.sf_valeri_va_loan;
+
+SELECT MAX(created_date) AS latest, COUNT(*) AS total_rows  -- adjust column name if needed
+FROM src_weblgy.mtge_loan;
+
+
+-- ============================================================
+-- Step H: Check the datapump/refresh jobs that feed these 
+-- src_* schemas — this is likely where the actual break is
+-- ============================================================
+SELECT batch_id, source_system, subject_area, batch_status,
+       start_time, end_time
+FROM ETL.ETL_LOG
+WHERE subject_area IN ('intg_datapump_pkg.daily_refresh', 'weblgy_datapump_pkg.weblgy_direct')
+   OR source_system IN ('VALERIR INTG', 'WEBLGY')
+ORDER BY start_time DESC
+FETCH FIRST 20 ROWS ONLY;
