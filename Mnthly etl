@@ -1,0 +1,17 @@
+SELECT job_name, owner, enabled, state, repeat_interval, last_start_date, next_run_date
+FROM dba_scheduler_jobs
+WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY','ANALYTICS','ORACLE')
+ORDER BY owner, job_name;
+
+
+SELECT job_name, owner, actual_start_date, status, output
+FROM dba_scheduler_job_run_details
+WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY','ANALYTICS')
+AND TRUNC(actual_start_date) = TRUNC(SYSDATE)
+ORDER BY actual_start_date;
+
+
+SELECT job_name, output
+FROM dba_scheduler_job_run_details
+WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY', 'ANALYTICS')
+AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
