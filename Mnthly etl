@@ -15,3 +15,26 @@ SELECT job_name, output
 FROM dba_scheduler_job_run_details
 WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY', 'ANALYTICS')
 AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
+
+dddddddddd
+SELECT job_name, session_id, running_instance, elapsed_time, cpu_used
+FROM dba_scheduler_running_jobs
+WHERE job_name = 'DAILY_ETL';
+
+SELECT job_name, actual_start_date, status, output, error#
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'DAILY_ETL'
+AND TRUNC(actual_start_date) = TO_DATE('2026-09-02','YYYY-MM-DD');
+
+SELECT job_name, log_date, operation, status
+FROM dba_scheduler_job_log
+WHERE job_name = 'DAILY_ETL'
+ORDER BY log_date DESC
+FETCH FIRST 20 ROWS ONLY;
+
+SELECT log_date, job_name, status, additional_info
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'DAILY_ETL'
+AND log_date BETWEEN TO_DATE('2026-09-01','YYYY-MM-DD') AND TO_DATE('2026-09-04','YYYY-MM-DD')
+ORDER BY log_date;
+
