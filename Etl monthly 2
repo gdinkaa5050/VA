@@ -166,3 +166,33 @@ EXCEPTION
         RAISE;
 END;
 /
+
+
+
+
+
+
+verify count
+SELECT module, COUNT(*) AS row_count, SUM(LENGTH(msg_text)) AS total_chars
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TRUNC(SYSDATE)
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%')
+GROUP BY module;
+
+
+SELECT COUNT(*) AS row_count, SUM(LENGTH(msg_text)) AS char_count
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TRUNC(SYSDATE)
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%');
+
+
+SELECT COUNT(*) AS row_count, SUM(LENGTH(msg_text)) AS char_count
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%');
