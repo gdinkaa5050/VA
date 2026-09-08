@@ -21,3 +21,148 @@ SELECT DISTINCT module
 FROM ETL.ETL_MESSAGE_LOG
 WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')  -- or your test date
 ORDER BY module;
+
+
+
+CREATE OR REPLACE PROCEDURE ORACLE.MNTHLY_ETL_EMAIL
+AS
+    v_from          VARCHAR2(80)  := 'stg-any';
+    v_recipient_1   VARCHAR2(80)  := 'xxxx';
+    v_recipient_3   VARCHAR2(80)  := 'xxxx';
+    v_recipient_4   VARCHAR2(80)  := 'xxxx';
+    v_subject       VARCHAR2(80)  := 'LGA Oracle RDS Daily/Monthly Load';
+    v_mail_host     VARCHAR2(30)  := 'smtp.va.gov';
+    v_mail_conn     UTL_SMTP.CONNECTION;
+    crlf            VARCHAR2(2)   := CHR(13) || CHR(10);
+
+    -- Pull today's messages from the EXISTING logging table.
+    -- Adjust the MODULE filter list to match the actual module
+    -- names used by the 3 jobs you're tracking (confirmed from
+    -- source: etl_api_pkg.run_etl, intg_datapump_pkg.*,
+    -- weblgy_datapump_pkg.* - update as needed).
+    CURSOR check_sf IS
+        SELECT module, msg_date, msg_text
+        FROM ETL.ETL_MESSAGE_LOG
+        WHERE TRUNC(msg_date) = TRUNC(SYSDATE)   -- live/today
+          AND (module LIKE 'etl_api_pkg%'
+               OR module LIKE 'intg_datapump_pkg%'
+               OR module LIKE 'weblgy_datapump_pkg%')
+        ORDER BY module, msg_date;
+
+BEGIN
+    v_mail_conn := UTL_SMTP.OPEN_CONNECTION(v_mail_host);
+    UTL_SMTP.HELO(v_mail_conn, v_mail_host);
+    UTL_SMTP.MAIL(v_mail_conn, v_from);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_1);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_3);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_4);
+
+    UTL_SMTP.OPEN_DATA(v_mail_conn);
+
+    -- Mail Header
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Date: ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH:MI:SS AM') || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'From: ' || v_from || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Subject: ' || v_subject || ' Log Status ' || crlf);
+
+    -- Mail Body
+    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+
+    -- Print each job's messages under its own header, with a blank
+    -- line and explicit END marker after each job's block. This
+    -- makes the job boundaries visible and makes truncation obvious
+    -- (if a job's END marker is missing, the email was cut off).
+    -- Each msg_text is also chunked (SUBSTR loop) so no single
+    -- long message line gets silently truncated or dropped.
+    DECLARE
+        v_prev_module   VARCHAR2(1000) := NULL;
+        v_total_rows    NUMBER := 0;
+        v_total_chars   NUMBER := 0;
+        v_module_rows   NUMBER := 0;
+        v_module_chars  NUMBER := 0;
+    BEGIN
+        FOR cur_rec IN check_sf LOOP
+
+            IF v_prev_module IS NULL OR cur_rec.module <> v_prev_module THEN
+                -- close out the previous job's block, if any
+                IF v_prev_module IS NOT NULL THEN
+                    UTL_SMTP.WRITE_DATA(v_mail_conn,
+                        '--- END: ' || v_prev_module ||
+                        ' (rows: ' || v_module_rows ||
+                        ', chars: ' || v_module_chars || ') ---' || crlf || crlf);
+                END IF;
+
+                -- start the new job's block
+                UTL_SMTP.WRITE_DATA(v_mail_conn,
+                    '=== ' || cur_rec.module || ' ===' || crlf);
+
+                v_prev_module  := cur_rec.module;
+                v_module_rows  := 0;
+                v_module_chars := 0;
+            END IF;
+
+            v_module_rows  := v_module_rows + 1;
+            v_module_chars := v_module_chars + NVL(LENGTH(cur_rec.msg_text), 0);
+            v_total_rows   := v_total_rows + 1;
+            v_total_chars  := v_total_chars + NVL(LENGTH(cur_rec.msg_text), 0);
+
+            -- Write the timestamp prefix first
+            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                TO_CHAR(cur_rec.msg_date, 'HH24:MI:SS') || ' | ');
+
+            -- Chunk msg_text to prevent line/size truncation
+            DECLARE
+                v_offset     NUMBER := 1;
+                v_chunk_size NUMBER := 900; -- safe size
+                v_len        NUMBER := NVL(LENGTH(cur_rec.msg_text), 0);
+            BEGIN
+                IF v_len = 0 THEN
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, '(No message text)' || crlf);
+                ELSE
+                    WHILE v_offset <= v_len LOOP
+                        UTL_SMTP.WRITE_DATA(v_mail_conn,
+                            SUBSTR(cur_rec.msg_text, v_offset, v_chunk_size));
+                        v_offset := v_offset + v_chunk_size;
+                    END LOOP;
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, crlf);
+                END IF;
+            END;
+
+        END LOOP;
+
+        -- close out the last job's block
+        IF v_prev_module IS NOT NULL THEN
+            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                '--- END: ' || v_prev_module ||
+                ' (rows: ' || v_module_rows ||
+                ', chars: ' || v_module_chars || ') ---' || crlf || crlf);
+        END IF;
+
+        -- Grand total trailer: cross-check this against a fresh
+        -- SELECT COUNT(*), SUM(LENGTH(msg_text)) run against the
+        -- same WHERE clause. If these numbers don't match, some
+        -- part of the email body was dropped or cut off.
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL ROWS EMAILED: ' || v_total_rows || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL CHARACTERS EMAILED: ' || v_total_chars || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+    END;
+
+    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+
+    UTL_SMTP.CLOSE_DATA(v_mail_conn);
+    UTL_SMTP.QUIT(v_mail_conn);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        NULL;
+    WHEN OTHERS THEN
+        RAISE;
+END;
+/
