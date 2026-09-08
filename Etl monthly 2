@@ -1,0 +1,23 @@
+SELECT
+  CASE 
+    WHEN module LIKE 'etl_api_pkg%' THEN 'DAILY_ETL match'
+    WHEN module LIKE 'inte_datapump_pkg%' THEN 'VALERIR match'
+    WHEN module LIKE 'weblgy_datapump_pkg%' THEN 'WEBLGY match'
+    ELSE 'NO MATCH: ' || module
+  END AS match_status,
+  COUNT(*) AS row_count
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')
+GROUP BY 
+  CASE 
+    WHEN module LIKE 'etl_api_pkg%' THEN 'DAILY_ETL match'
+    WHEN module LIKE 'inte_datapump_pkg%' THEN 'VALERIR match'
+    WHEN module LIKE 'weblgy_datapump_pkg%' THEN 'WEBLGY match'
+    ELSE 'NO MATCH: ' || module
+  END;
+
+
+SELECT DISTINCT module
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')  -- or your test date
+ORDER BY module;
