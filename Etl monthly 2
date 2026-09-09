@@ -367,7 +367,7 @@ END;
 
 
 
-############
+###########
 
 CREATE OR REPLACE PROCEDURE ORACLE.MNTHLY_ETL_EMAIL
 AS
@@ -432,12 +432,32 @@ BEGIN
         v_total_records NUMBER := 0;
         v_module_records NUMBER := 0;
         v_parsed_num    NUMBER;
+        v_parsed_table  VARCHAR2(200);
+
+        -- Per-table breakdown within the current module, e.g.
+        -- "Inserted 693181 into CASH_OUT_REFINANCE" -> tbl_counts('CASH_OUT_REFINANCE') := 693181
+        -- Reset every time a new module block starts.
+        TYPE t_tbl_counts IS TABLE OF NUMBER INDEX BY VARCHAR2(200);
+        v_tbl_counts    t_tbl_counts;
+        v_tbl_key       VARCHAR2(200);
     BEGIN
         FOR cur_rec IN check_sf LOOP
 
             IF v_prev_module IS NULL OR cur_rec.module <> v_prev_module THEN
                 -- close out the previous job's block, if any
                 IF v_prev_module IS NOT NULL THEN
+                    -- Print per-table breakdown, if any tables were parsed
+                    IF v_tbl_counts.COUNT > 0 THEN
+                        UTL_SMTP.WRITE_DATA(v_mail_conn,
+                            '  -- Record counts by table --' || crlf);
+                        v_tbl_key := v_tbl_counts.FIRST;
+                        WHILE v_tbl_key IS NOT NULL LOOP
+                            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                                '  ' || v_tbl_key || ': ' || v_tbl_counts(v_tbl_key) || crlf);
+                            v_tbl_key := v_tbl_counts.NEXT(v_tbl_key);
+                        END LOOP;
+                    END IF;
+
                     UTL_SMTP.WRITE_DATA(v_mail_conn,
                         '--- END ' || v_freq_label || ': ' || v_prev_module ||
                         ' (rows: ' || v_module_rows ||
@@ -466,6 +486,7 @@ BEGIN
                 v_module_rows   := 0;
                 v_module_chars  := 0;
                 v_module_records := 0;
+                v_tbl_counts.DELETE;
             END IF;
 
             v_module_rows  := v_module_rows + 1;
@@ -473,15 +494,32 @@ BEGIN
             v_total_rows   := v_total_rows + 1;
             v_total_chars  := v_total_chars + NVL(LENGTH(cur_rec.msg_text), 0);
 
-            -- Parse out "records count is <number>" if present in this
-            -- message and add it to the running totals. Case-insensitive
-            -- match since logging text may vary in casing.
+            -- Parse out "Inserted <number> into <table>" if present in
+            -- this message. This is the consistent phrasing used across
+            -- the monthly jobs (intg_events_load, intg_table_load,
+            -- weblgy_direct) - one line per target table.
+            -- NOTE: some modules also log a standalone "records count is X"
+            -- summary line that restates a count already captured by an
+            -- "Inserted X into <table>" line for the same load. That
+            -- phrasing is intentionally NOT parsed here to avoid double-
+            -- counting the same records twice. If ops confirms "records
+            -- count is X" is actually a distinct/additional number (not
+            -- a duplicate), let's add it back as its own bucket.
             v_parsed_num := TO_NUMBER(
-                REGEXP_SUBSTR(cur_rec.msg_text, 'records count is (\d+)', 1, 1, 'i', 1)
+                REGEXP_SUBSTR(cur_rec.msg_text, 'Inserted (\d+) into', 1, 1, 'i', 1)
             );
-            IF v_parsed_num IS NOT NULL THEN
+            v_parsed_table := REGEXP_SUBSTR(cur_rec.msg_text, 'Inserted \d+ into (\S+)', 1, 1, 'i', 1);
+
+            IF v_parsed_num IS NOT NULL AND v_parsed_table IS NOT NULL THEN
+                v_parsed_table := RTRIM(v_parsed_table, '.'); -- strip trailing period if present
                 v_module_records := v_module_records + v_parsed_num;
                 v_total_records  := v_total_records + v_parsed_num;
+
+                IF v_tbl_counts.EXISTS(v_parsed_table) THEN
+                    v_tbl_counts(v_parsed_table) := v_tbl_counts(v_parsed_table) + v_parsed_num;
+                ELSE
+                    v_tbl_counts(v_parsed_table) := v_parsed_num;
+                END IF;
             END IF;
 
             -- Write the timestamp prefix first
@@ -510,6 +548,17 @@ BEGIN
 
         -- close out the last job's block
         IF v_prev_module IS NOT NULL THEN
+            IF v_tbl_counts.COUNT > 0 THEN
+                UTL_SMTP.WRITE_DATA(v_mail_conn,
+                    '  -- Record counts by table --' || crlf);
+                v_tbl_key := v_tbl_counts.FIRST;
+                WHILE v_tbl_key IS NOT NULL LOOP
+                    UTL_SMTP.WRITE_DATA(v_mail_conn,
+                        '  ' || v_tbl_key || ': ' || v_tbl_counts(v_tbl_key) || crlf);
+                    v_tbl_key := v_tbl_counts.NEXT(v_tbl_key);
+                END LOOP;
+            END IF;
+
             UTL_SMTP.WRITE_DATA(v_mail_conn,
                 '--- END ' || v_freq_label || ': ' || v_prev_module ||
                 ' (rows: ' || v_module_rows ||
@@ -521,8 +570,9 @@ BEGIN
         -- SELECT COUNT(*), SUM(LENGTH(msg_text)) run against the
         -- same WHERE clause. If these numbers don't match, some
         -- part of the email body was dropped or cut off.
-        -- TOTAL RECORDS is a separate business metric parsed out of
-        -- any "records count is <number>" text inside msg_text.
+        -- TOTAL RECORDS PROCESSED sums every "Inserted X into <table>"
+        -- line found across all modules (see per-table breakdown above
+        -- each module's END line for the detail behind this number).
         UTL_SMTP.WRITE_DATA(v_mail_conn,
             '================================================' || crlf);
         UTL_SMTP.WRITE_DATA(v_mail_conn,
