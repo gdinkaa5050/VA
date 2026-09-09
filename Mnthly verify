@@ -1,0 +1,42 @@
+-- ============================================================
+-- Verification Queries: Record Count Cross-Check
+-- Compare these results against the MNTHLY_ETL_EMAIL output
+-- ============================================================
+
+-- 1. Total records parsed from the log (should match the email's
+--    "TOTAL RECORDS PROCESSED" trailer line exactly)
+SELECT SUM(
+    TO_NUMBER(REGEXP_SUBSTR(msg_text, 'records count is (\d+)', 1, 1, 'i', 1))
+) AS total_records_parsed
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')  -- or your test date
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%');
+
+
+-- 2. Per-module breakdown (should match each module's "records:"
+--    value in the email's "--- END ... ---" lines)
+SELECT module,
+       SUM(TO_NUMBER(REGEXP_SUBSTR(msg_text, 'records count is (\d+)', 1, 1, 'i', 1))) AS records_parsed
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%')
+GROUP BY module
+ORDER BY module;
+
+
+-- 3. Line-level match status (flags which log lines actually
+--    contained a "records count is X" phrase vs. which didn't -
+--    useful for spotting jobs that log record counts differently)
+SELECT module, msg_date, msg_text,
+       CASE WHEN REGEXP_LIKE(msg_text, 'records count is \d+', 'i')
+            THEN 'MATCHED' ELSE 'no record count in text' END AS match_status
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TO_DATE('01-JUL-2026','DD-MON-YYYY')
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%')
+ORDER BY module, msg_date;
