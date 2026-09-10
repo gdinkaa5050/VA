@@ -1,0 +1,377 @@
+================================================================
+MIGRATING MNTHLY_ETL_EMAIL FROM ORACLE SCHEMA TO ANALYTICS SCHEMA
+================================================================
+
+STEP 1: Check current ownership and job definition
+----------------------------------------------------------------
+-- Confirm the procedure currently exists under ORACLE
+SELECT owner, object_name, object_type, status
+FROM dba_objects
+WHERE object_name = 'MNTHLY_ETL_EMAIL';
+
+-- Check the scheduled job definition (who owns/runs it, what it calls)
+SELECT job_name, job_action, schema_user, enabled, state
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL_EMAIL_JOB';
+
+
+STEP 2: Check what privileges ORACLE currently has (to replicate for ANALYTICS)
+----------------------------------------------------------------
+-- Direct grants to ORACLE
+SELECT grantee, owner, table_name, privilege
+FROM dba_tab_privs
+WHERE grantee = 'ORACLE';
+
+-- Roles granted to ORACLE (privileges may come via a role instead of direct grants)
+SELECT * FROM dba_role_privs WHERE grantee = 'ORACLE';
+
+-- System/network ACL privileges granted to ORACLE (relevant for UTL_SMTP/UTL_TCP)
+SELECT acl, principal, privilege, is_grant
+FROM dba_network_acl_privileges
+WHERE principal = 'ORACLE';
+
+
+STEP 3: Grant ANALYTICS the same privileges
+----------------------------------------------------------------
+-- Run as a DBA or as the ETL schema owner
+
+-- (a) Table access
+GRANT SELECT ON ETL.ETL_MESSAGE_LOG TO ANALYTICS;
+
+-- (b) Execute rights on the SMTP/TCP packages (skip if already granted via PUBLIC or a role)
+GRANT EXECUTE ON UTL_SMTP TO ANALYTICS;
+GRANT EXECUTE ON UTL_TCP TO ANALYTICS;
+
+-- (c) Network ACL: authorize ANALYTICS to connect out to the mail host
+--     (only needed if your DB version enforces DBMS_NETWORK_ACL_ADMIN - 11g+)
+-- First, find the ACL currently used by ORACLE for smtp.va.gov:
+SELECT acl, host, lower_port, upper_port
+FROM dba_network_acls
+WHERE host = 'smtp.va.gov';
+
+-- Then add ANALYTICS as a principal to that same ACL (replace 'your_acl_name.xml' with the result above):
+BEGIN
+  DBMS_NETWORK_ACL_ADMIN.ADD_PRIVILEGE(
+    acl         => 'your_acl_name.xml',
+    principal   => 'ANALYTICS',
+    is_grant    => TRUE,
+    privilege   => 'connect'
+  );
+  DBMS_NETWORK_ACL_ADMIN.ADD_PRIVILEGE(
+    acl         => 'your_acl_name.xml',
+    principal   => 'ANALYTICS',
+    is_grant    => TRUE,
+    privilege   => 'resolve'
+  );
+  COMMIT;
+END;
+/
+
+
+STEP 4: Create the procedure under ANALYTICS
+----------------------------------------------------------------
+-- Run this connected AS ANALYTICS (or with ANALYTICS. prefix and sufficient privileges)
+-- This is the same procedure body, just re-headered under the new schema.
+
+CREATE OR REPLACE PROCEDURE ANALYTICS.MNTHLY_ETL_EMAIL
+AS
+    v_from          VARCHAR2(80)  := 'stg-any';
+    v_recipient_1   VARCHAR2(80)  := 'xxxx';
+    v_recipient_3   VARCHAR2(80)  := 'xxxx';
+    v_recipient_4   VARCHAR2(80)  := 'xxxx';
+    v_subject       VARCHAR2(80)  := 'LGA Oracle RDS Daily/Monthly Load';
+    v_mail_host     VARCHAR2(30)  := 'smtp.va.gov';
+    v_mail_conn     UTL_SMTP.CONNECTION;
+    crlf            VARCHAR2(2)   := CHR(13) || CHR(10);
+
+    CURSOR check_sf IS
+        SELECT module, msg_date, msg_text
+        FROM ETL.ETL_MESSAGE_LOG
+        WHERE TRUNC(msg_date) = TRUNC(SYSDATE)   -- live/today
+          AND (module LIKE 'etl_api_pkg%'
+               OR module LIKE 'intg_datapump_pkg%'
+               OR module LIKE 'weblgy_datapump_pkg%')
+        ORDER BY module, msg_date;
+
+BEGIN
+    v_mail_conn := UTL_SMTP.OPEN_CONNECTION(v_mail_host);
+    UTL_SMTP.HELO(v_mail_conn, v_mail_host);
+    UTL_SMTP.MAIL(v_mail_conn, v_from);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_1);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_3);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_4);
+
+    UTL_SMTP.OPEN_DATA(v_mail_conn);
+
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Date: ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH:MI:SS AM') || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'From: ' || v_from || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Subject: ' || v_subject || ' Log Status ' || crlf);
+
+    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+
+    DECLARE
+        v_prev_module     VARCHAR2(1000) := NULL;
+        v_total_rows      NUMBER := 0;
+        v_total_chars     NUMBER := 0;
+        v_module_rows     NUMBER := 0;
+        v_module_chars    NUMBER := 0;
+        v_freq_label      VARCHAR2(20);
+        v_total_records   NUMBER := 0;
+        v_module_records  NUMBER := 0;
+        v_parsed_num      NUMBER;
+        v_parsed_table    VARCHAR2(200);
+
+        v_daily_rows      NUMBER := 0;
+        v_daily_chars     NUMBER := 0;
+        v_daily_records   NUMBER := 0;
+        v_monthly_rows    NUMBER := 0;
+        v_monthly_chars   NUMBER := 0;
+        v_monthly_records NUMBER := 0;
+
+        TYPE t_tbl_counts IS TABLE OF NUMBER INDEX BY VARCHAR2(200);
+        v_tbl_counts    t_tbl_counts;
+        v_tbl_key       VARCHAR2(200);
+    BEGIN
+        FOR cur_rec IN check_sf LOOP
+
+            IF v_prev_module IS NULL OR cur_rec.module <> v_prev_module THEN
+                IF v_prev_module IS NOT NULL THEN
+                    IF v_tbl_counts.COUNT > 0 THEN
+                        UTL_SMTP.WRITE_DATA(v_mail_conn,
+                            '  -- Record counts by table --' || crlf);
+                        v_tbl_key := v_tbl_counts.FIRST;
+                        WHILE v_tbl_key IS NOT NULL LOOP
+                            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                                '  ' || v_tbl_key || ': ' || v_tbl_counts(v_tbl_key) || crlf);
+                            v_tbl_key := v_tbl_counts.NEXT(v_tbl_key);
+                        END LOOP;
+                    END IF;
+
+                    UTL_SMTP.WRITE_DATA(v_mail_conn,
+                        '--- END ' || v_freq_label || ': ' || v_prev_module ||
+                        ' (rows: ' || v_module_rows ||
+                        ', chars: ' || v_module_chars ||
+                        ', records: ' || v_module_records || ') ---' || crlf || crlf);
+
+                    IF v_freq_label = 'DAILY' THEN
+                        v_daily_rows    := v_daily_rows + v_module_rows;
+                        v_daily_chars   := v_daily_chars + v_module_chars;
+                        v_daily_records := v_daily_records + v_module_records;
+                    ELSIF v_freq_label = 'MONTHLY' THEN
+                        v_monthly_rows    := v_monthly_rows + v_module_rows;
+                        v_monthly_chars   := v_monthly_chars + v_module_chars;
+                        v_monthly_records := v_monthly_records + v_module_records;
+                    END IF;
+                END IF;
+
+                IF cur_rec.module LIKE 'etl_api_pkg%' THEN
+                    v_freq_label := 'DAILY';
+                ELSIF cur_rec.module LIKE 'intg_datapump_pkg%'
+                   OR cur_rec.module LIKE 'weblgy_datapump_pkg%' THEN
+                    v_freq_label := 'MONTHLY';
+                ELSE
+                    v_freq_label := 'UNKNOWN';
+                END IF;
+
+                UTL_SMTP.WRITE_DATA(v_mail_conn,
+                    '=== ' || v_freq_label || ': ' || cur_rec.module || ' ===' || crlf);
+
+                v_prev_module     := cur_rec.module;
+                v_module_rows     := 0;
+                v_module_chars    := 0;
+                v_module_records  := 0;
+                v_tbl_counts.DELETE;
+            END IF;
+
+            v_module_rows  := v_module_rows + 1;
+            v_module_chars := v_module_chars + NVL(LENGTH(cur_rec.msg_text), 0);
+            v_total_rows   := v_total_rows + 1;
+            v_total_chars  := v_total_chars + NVL(LENGTH(cur_rec.msg_text), 0);
+
+            v_parsed_num := TO_NUMBER(
+                REGEXP_SUBSTR(cur_rec.msg_text, 'Inserted (\d+) into', 1, 1, 'i', 1)
+            );
+            v_parsed_table := REGEXP_SUBSTR(cur_rec.msg_text, 'Inserted \d+ into (\S+)', 1, 1, 'i', 1);
+
+            IF v_parsed_num IS NOT NULL AND v_parsed_table IS NOT NULL THEN
+                v_parsed_table := RTRIM(v_parsed_table, '.');
+                v_module_records := v_module_records + v_parsed_num;
+                v_total_records  := v_total_records + v_parsed_num;
+
+                IF v_tbl_counts.EXISTS(v_parsed_table) THEN
+                    v_tbl_counts(v_parsed_table) := v_tbl_counts(v_parsed_table) + v_parsed_num;
+                ELSE
+                    v_tbl_counts(v_parsed_table) := v_parsed_num;
+                END IF;
+            END IF;
+
+            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                TO_CHAR(cur_rec.msg_date, 'HH24:MI:SS') || ' | ');
+
+            DECLARE
+                v_offset     NUMBER := 1;
+                v_chunk_size NUMBER := 900;
+                v_len        NUMBER := NVL(LENGTH(cur_rec.msg_text), 0);
+            BEGIN
+                IF v_len = 0 THEN
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, '(No message text)' || crlf);
+                ELSE
+                    WHILE v_offset <= v_len LOOP
+                        UTL_SMTP.WRITE_DATA(v_mail_conn,
+                            SUBSTR(cur_rec.msg_text, v_offset, v_chunk_size));
+                        v_offset := v_offset + v_chunk_size;
+                    END LOOP;
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, crlf);
+                END IF;
+            END;
+
+        END LOOP;
+
+        IF v_prev_module IS NOT NULL THEN
+            IF v_tbl_counts.COUNT > 0 THEN
+                UTL_SMTP.WRITE_DATA(v_mail_conn,
+                    '  -- Record counts by table --' || crlf);
+                v_tbl_key := v_tbl_counts.FIRST;
+                WHILE v_tbl_key IS NOT NULL LOOP
+                    UTL_SMTP.WRITE_DATA(v_mail_conn,
+                        '  ' || v_tbl_key || ': ' || v_tbl_counts(v_tbl_key) || crlf);
+                    v_tbl_key := v_tbl_counts.NEXT(v_tbl_key);
+                END LOOP;
+            END IF;
+
+            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                '--- END ' || v_freq_label || ': ' || v_prev_module ||
+                ' (rows: ' || v_module_rows ||
+                ', chars: ' || v_module_chars ||
+                ', records: ' || v_module_records || ') ---' || crlf || crlf);
+
+            IF v_freq_label = 'DAILY' THEN
+                v_daily_rows    := v_daily_rows + v_module_rows;
+                v_daily_chars   := v_daily_chars + v_module_chars;
+                v_daily_records := v_daily_records + v_module_records;
+            ELSIF v_freq_label = 'MONTHLY' THEN
+                v_monthly_rows    := v_monthly_rows + v_module_rows;
+                v_monthly_chars   := v_monthly_chars + v_module_chars;
+                v_monthly_records := v_monthly_records + v_module_records;
+            END IF;
+        END IF;
+
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'DAILY REPORT SUBTOTAL -- rows: ' || v_daily_rows ||
+            ', chars: ' || v_daily_chars ||
+            ', records: ' || v_daily_records || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'MONTHLY REPORT SUBTOTAL -- rows: ' || v_monthly_rows ||
+            ', chars: ' || v_monthly_chars ||
+            ', records: ' || v_monthly_records || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '------------------------------------------------' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL ROWS EMAILED: ' || v_total_rows || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL CHARACTERS EMAILED: ' || v_total_chars || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL RECORDS PROCESSED: ' || v_total_records || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+    END;
+
+    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+
+    UTL_SMTP.CLOSE_DATA(v_mail_conn);
+    UTL_SMTP.QUIT(v_mail_conn);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        NULL;
+    WHEN OTHERS THEN
+        RAISE;
+END;
+/
+
+-- Confirm it compiled cleanly (no errors) - fix here if anything shows up
+SHOW ERRORS PROCEDURE ANALYTICS.MNTHLY_ETL_EMAIL;
+
+
+STEP 5: Test the new ANALYTICS procedure manually BEFORE touching the job
+----------------------------------------------------------------
+-- Run this connected AS ANALYTICS (or as a user with EXECUTE on it).
+-- IMPORTANT: before running, temporarily point v_recipient_1/3/4 at
+-- yourself/your team only - do NOT run this against the full
+-- distribution list on the first test.
+
+EXEC ANALYTICS.MNTHLY_ETL_EMAIL;
+
+-- If it errors with ORA-24247 (network ACL) - go back to Step 3(c)
+-- and confirm ANALYTICS was added to the correct ACL for smtp.va.gov.
+
+-- If it errors with ORA-00942/insufficient privileges on ETL_MESSAGE_LOG
+-- - go back to Step 3(a) and confirm the grant went through.
+
+
+STEP 6: Verify the test email's output
+----------------------------------------------------------------
+-- Cross-check what the email SHOULD show, using the same date/filter
+-- the procedure uses (swap TRUNC(SYSDATE) below if testing a specific date)
+
+SELECT COUNT(*) AS row_count, SUM(LENGTH(msg_text)) AS char_count
+FROM ETL.ETL_MESSAGE_LOG
+WHERE TRUNC(msg_date) = TRUNC(SYSDATE)
+  AND (module LIKE 'etl_api_pkg%'
+       OR module LIKE 'intg_datapump_pkg%'
+       OR module LIKE 'weblgy_datapump_pkg%');
+
+-- Compare this against the email's "TOTAL ROWS EMAILED" / "TOTAL CHARACTERS EMAILED".
+-- Also confirm every expected "=== DAILY/MONTHLY: module ===" block appears
+-- with its matching "--- END ... ---" marker (nothing missing/truncated).
+
+
+STEP 7: Update the scheduled job to call the ANALYTICS version
+----------------------------------------------------------------
+-- Re-check current job action first
+SELECT job_name, job_action, schema_user
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL_EMAIL_JOB';
+
+-- Update the job to call the new schema's procedure
+BEGIN
+  DBMS_SCHEDULER.SET_ATTRIBUTE(
+    name      => 'DAILY_ETL_EMAIL_JOB',
+    attribute => 'JOB_ACTION',
+    value     => 'ANALYTICS.MNTHLY_ETL_EMAIL'
+  );
+END;
+/
+
+-- Restore the real recipient list in the ANALYTICS procedure body
+-- (undo the "test to yourself only" change from Step 5) before this
+-- job fires for real.
+
+
+STEP 8: Post-cutover checks
+----------------------------------------------------------------
+-- Confirm the job is enabled and pointing at the right procedure
+SELECT job_name, job_action, enabled, state
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL_EMAIL_JOB';
+
+-- After the next scheduled run, check the run history for success
+SELECT log_date, status, additional_info
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'DAILY_ETL_EMAIL_JOB'
+ORDER BY log_date DESC
+FETCH FIRST 5 ROWS ONLY;
+
+
+STEP 9 (optional): Retire the ORACLE version once confident
+----------------------------------------------------------------
+-- Only after at least one full successful cycle under ANALYTICS
+-- (ideally including a 1st-of-month run to exercise both daily +
+-- monthly paths). Keep as backup for one cycle before dropping.
+
+-- DROP PROCEDURE ORACLE.MNTHLY_ETL_EMAIL;
