@@ -1,0 +1,495 @@
+================================================================
+BUILD DAILY + MONTHLY ETL EMAIL SYSTEM DIRECTLY UNDER ANALYTICS
+================================================================
+-- Combines: (1) the schema migration groundwork (grants/ACL) and
+-- (2) the daily/monthly split, so both new procedures and both new
+-- scheduler jobs are created under ANALYTICS from the start - no
+-- need to build under ORACLE first and move them later.
+
+
+STEP 1: Check what privileges ORACLE currently has (to replicate for ANALYTICS)
+----------------------------------------------------------------
+-- Direct grants to ORACLE
+SELECT grantee, owner, table_name, privilege
+FROM dba_tab_privs
+WHERE grantee = 'ORACLE';
+
+-- Roles granted to ORACLE (privileges may come via a role instead of direct grants)
+SELECT * FROM dba_role_privs WHERE grantee = 'ORACLE';
+
+-- Network ACL privileges granted to ORACLE (needed for UTL_SMTP/UTL_TCP)
+SELECT acl, principal, privilege, is_grant
+FROM dba_network_acl_privileges
+WHERE principal = 'ORACLE';
+
+
+STEP 2: Grant ANALYTICS the privileges it needs
+----------------------------------------------------------------
+-- Run as a DBA
+
+-- (a) Access to the scheduler job run details view
+--     (usually available via a role like SELECT_CATALOG_ROLE - confirm
+--     ORACLE has direct access or via a role, and replicate for ANALYTICS)
+GRANT SELECT_CATALOG_ROLE TO ANALYTICS;
+-- OR, if more narrowly scoped in your environment:
+-- GRANT SELECT ON SYS.DBA_SCHEDULER_JOB_RUN_DETAILS TO ANALYTICS;
+
+-- (b) Execute rights on the SMTP/TCP packages (skip if already granted via PUBLIC)
+GRANT EXECUTE ON UTL_SMTP TO ANALYTICS;
+GRANT EXECUTE ON UTL_TCP TO ANALYTICS;
+
+-- (c) Scheduler privileges so ANALYTICS can create/manage its own jobs
+GRANT CREATE JOB TO ANALYTICS;
+GRANT MANAGE SCHEDULER TO ANALYTICS;  -- only if your org allows this; otherwise a DBA creates the jobs on ANALYTICS's behalf
+
+-- (d) Network ACL: authorize ANALYTICS to connect out to the mail host
+--     (only needed if DBMS_NETWORK_ACL_ADMIN enforces this - 11g+)
+SELECT acl, host, lower_port, upper_port
+FROM dba_network_acls
+WHERE host = 'smtp.va.gov';
+
+-- Add ANALYTICS as a principal to that same ACL (replace 'your_acl_name.xml'
+-- with the result from the query above):
+BEGIN
+  DBMS_NETWORK_ACL_ADMIN.ADD_PRIVILEGE(
+    acl         => 'your_acl_name.xml',
+    principal   => 'ANALYTICS',
+    is_grant    => TRUE,
+    privilege   => 'connect'
+  );
+  DBMS_NETWORK_ACL_ADMIN.ADD_PRIVILEGE(
+    acl         => 'your_acl_name.xml',
+    principal   => 'ANALYTICS',
+    is_grant    => TRUE,
+    privilege   => 'resolve'
+  );
+  COMMIT;
+END;
+/
+
+
+STEP 3: Create the DAILY procedure under ANALYTICS (ANALYTICS-owned jobs only)
+----------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE ANALYTICS.DAILY_ETL_EMAIL
+AS
+    v_from          VARCHAR2(80)  := 'prv';
+    v_recipient_1   VARCHAR2(80)  := 'LGYv';
+    v_recipient_3   VARCHAR2(80)  := 'RAJEv';
+    v_recipient_4   VARCHAR2(80)  := 'lav';
+    v_recipient_5   VARCHAR2(80)  := 'EDov';
+    v_recipient_6   VARCHAR2(80)  := 'oitlgov';
+    v_subject       VARCHAR2(80)  := 'LGA Oracle RDS Daily Load';
+    v_mail_host     VARCHAR2(30)  := 'smtp.va.gov';
+    v_mail_conn     UTL_SMTP.CONNECTION;
+    crlf            VARCHAR2(2)   := CHR(13) || CHR(10);
+
+    -- QUERY to QUEUE FOR FILE STATUS: ANALYTICS only (daily job)
+    CURSOR check_sf IS
+        SELECT job_name, output
+        FROM dba_scheduler_job_run_details
+        WHERE owner = 'ANALYTICS'
+          AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
+
+BEGIN
+    v_mail_conn := UTL_SMTP.OPEN_CONNECTION(v_mail_host);
+    UTL_SMTP.HELO(v_mail_conn, v_mail_host);
+    UTL_SMTP.MAIL(v_mail_conn, v_from);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_1);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_3);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_4);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_5);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_6);
+
+    -- OPEN DATA CONNECTION
+    UTL_SMTP.OPEN_DATA(v_mail_conn);
+
+    -- MAIL HEADER
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Date: ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH:MI:SS AM') || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn, 'From: ' || v_from || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Subject: ' || v_subject || ' Log Status ' || crlf);
+
+    -- MAIL BODY
+    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+
+    DECLARE
+        v_total_rows NUMBER := 0;
+        v_total_chars NUMBER := 0;
+    BEGIN
+        FOR cur_rec IN check_sf LOOP
+            v_total_rows  := v_total_rows + 1;
+            v_total_chars := v_total_chars + NVL(LENGTH(cur_rec.output), 0);
+
+            -- Write the job name first
+            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                UTL_TCP.CRLF || cur_rec.job_name || UTL_TCP.CRLF);
+
+            -- Chunk the job output to prevent line truncation
+            DECLARE
+                v_offset     NUMBER := 1;
+                v_chunk_size NUMBER := 900; -- safe size
+                v_len        NUMBER := NVL(LENGTH(cur_rec.output), 0);
+            BEGIN
+                IF v_len = 0 THEN
+                    UTL_SMTP.WRITE_DATA(v_mail_conn,
+                        '(No Output available)' || UTL_TCP.CRLF);
+                ELSE
+                    WHILE v_offset <= v_len LOOP
+                        UTL_SMTP.WRITE_DATA(v_mail_conn,
+                            SUBSTR(cur_rec.output, v_offset, v_chunk_size));
+                        v_offset := v_offset + v_chunk_size;
+                    END LOOP;
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+                END IF;
+            END;
+        END LOOP;
+
+        -- Verification trailer: cross-check against a fresh COUNT(*)/
+        -- SUM(LENGTH(output)) query against the same WHERE clause
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL JOBS EMAILED: ' || v_total_rows || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL OUTPUT CHARACTERS: ' || v_total_chars || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+    END;
+
+    -- CLOSE CONNECTION
+    UTL_SMTP.CLOSE_DATA(v_mail_conn);
+    UTL_SMTP.QUIT(v_mail_conn);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        NULL;
+    WHEN OTHERS THEN
+        RAISE;
+END;
+/
+
+SHOW ERRORS PROCEDURE ANALYTICS.DAILY_ETL_EMAIL;
+
+
+STEP 4: Create the MONTHLY procedure under ANALYTICS (SRC_VALERIR / SRC_WEBLGY only)
+----------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE ANALYTICS.MONTHLY_ETL_EMAIL
+AS
+    v_from          VARCHAR2(80)  := 'prv';
+    v_recipient_1   VARCHAR2(80)  := 'LGYv';
+    v_recipient_3   VARCHAR2(80)  := 'RAJEv';
+    v_recipient_4   VARCHAR2(80)  := 'lav';
+    v_recipient_5   VARCHAR2(80)  := 'EDov';
+    v_recipient_6   VARCHAR2(80)  := 'oitlgov';
+    v_subject       VARCHAR2(80)  := 'LGA Oracle RDS Monthly Load';
+    v_mail_host     VARCHAR2(30)  := 'smtp.va.gov';
+    v_mail_conn     UTL_SMTP.CONNECTION;
+    crlf            VARCHAR2(2)   := CHR(13) || CHR(10);
+
+    -- QUERY to QUEUE FOR FILE STATUS: SRC_VALERIR + SRC_WEBLGY only (monthly jobs)
+    CURSOR check_sf IS
+        SELECT job_name, output
+        FROM dba_scheduler_job_run_details
+        WHERE owner IN ('SRC_VALERIR', 'SRC_WEBLGY')
+          AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
+
+BEGIN
+    v_mail_conn := UTL_SMTP.OPEN_CONNECTION(v_mail_host);
+    UTL_SMTP.HELO(v_mail_conn, v_mail_host);
+    UTL_SMTP.MAIL(v_mail_conn, v_from);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_1);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_3);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_4);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_5);
+    UTL_SMTP.RCPT(v_mail_conn, v_recipient_6);
+
+    -- OPEN DATA CONNECTION
+    UTL_SMTP.OPEN_DATA(v_mail_conn);
+
+    -- MAIL HEADER
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Date: ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH:MI:SS AM') || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn, 'From: ' || v_from || crlf);
+    UTL_SMTP.WRITE_DATA(v_mail_conn,
+        'Subject: ' || v_subject || ' Log Status ' || crlf);
+
+    -- MAIL BODY
+    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+
+    DECLARE
+        v_total_rows NUMBER := 0;
+        v_total_chars NUMBER := 0;
+    BEGIN
+        FOR cur_rec IN check_sf LOOP
+            v_total_rows  := v_total_rows + 1;
+            v_total_chars := v_total_chars + NVL(LENGTH(cur_rec.output), 0);
+
+            -- Write the job name first
+            UTL_SMTP.WRITE_DATA(v_mail_conn,
+                UTL_TCP.CRLF || cur_rec.job_name || UTL_TCP.CRLF);
+
+            -- Chunk the job output to prevent line truncation
+            DECLARE
+                v_offset     NUMBER := 1;
+                v_chunk_size NUMBER := 900; -- safe size
+                v_len        NUMBER := NVL(LENGTH(cur_rec.output), 0);
+            BEGIN
+                IF v_len = 0 THEN
+                    UTL_SMTP.WRITE_DATA(v_mail_conn,
+                        '(No Output available)' || UTL_TCP.CRLF);
+                ELSE
+                    WHILE v_offset <= v_len LOOP
+                        UTL_SMTP.WRITE_DATA(v_mail_conn,
+                            SUBSTR(cur_rec.output, v_offset, v_chunk_size));
+                        v_offset := v_offset + v_chunk_size;
+                    END LOOP;
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, UTL_TCP.CRLF);
+                END IF;
+            END;
+        END LOOP;
+
+        -- Verification trailer
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL JOBS EMAILED: ' || v_total_rows || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            'TOTAL OUTPUT CHARACTERS: ' || v_total_chars || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn,
+            '================================================' || crlf);
+    END;
+
+    -- CLOSE CONNECTION
+    UTL_SMTP.CLOSE_DATA(v_mail_conn);
+    UTL_SMTP.QUIT(v_mail_conn);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        NULL;
+    WHEN OTHERS THEN
+        RAISE;
+END;
+/
+
+SHOW ERRORS PROCEDURE ANALYTICS.MONTHLY_ETL_EMAIL;
+
+
+STEP 5: Test each procedure manually BEFORE creating the scheduled jobs
+----------------------------------------------------------------
+-- IMPORTANT: before running, temporarily redirect recipients to
+-- yourself/your team only - do not run against the full distribution
+-- list on the first test of either procedure.
+
+EXEC ANALYTICS.DAILY_ETL_EMAIL;
+EXEC ANALYTICS.MONTHLY_ETL_EMAIL;
+
+-- If ORA-24247 (network ACL) - go back to Step 2(d) and confirm
+-- ANALYTICS was added to the correct ACL for smtp.va.gov.
+-- If ORA-00942/insufficient privileges on dba_scheduler_job_run_details
+-- - go back to Step 2(a).
+
+-- Cross-check each email's totals against a fresh query, e.g. for daily:
+SELECT COUNT(*) AS row_count, SUM(LENGTH(output)) AS char_count
+FROM dba_scheduler_job_run_details
+WHERE owner = 'ANALYTICS'
+  AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
+
+-- and for monthly:
+SELECT COUNT(*) AS row_count, SUM(LENGTH(output)) AS char_count
+FROM dba_scheduler_job_run_details
+WHERE owner IN ('SRC_VALERIR', 'SRC_WEBLGY')
+  AND TRUNC(actual_start_date) = TRUNC(SYSDATE);
+
+-- Compare against "TOTAL JOBS EMAILED" / "TOTAL OUTPUT CHARACTERS"
+-- in each respective email.
+
+
+STEP 6: Create the two scheduler jobs under ANALYTICS
+----------------------------------------------------------------
+-- DAILY job: runs every day at 16:00 UTC (same time as the original)
+
+BEGIN
+  SYS.DBMS_SCHEDULER.CREATE_JOB
+  (
+      job_name         => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,start_date       => SYSTIMESTAMP
+     ,repeat_interval  => 'FREQ=DAILY; BYHOUR=16; BYMINUTE=0; BYSECOND=0;'
+     ,end_date         => NULL
+     ,job_class        => 'DEFAULT_JOB_CLASS'
+     ,job_type         => 'STORED_PROCEDURE'
+     ,job_action       => 'DAILY_ETL_EMAIL'
+     ,comments         => 'Daily email notification for ANALYTICS job status'
+  );
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'RESTARTABLE'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'LOGGING_LEVEL'
+     ,value     => SYS.DBMS_SCHEDULER.LOGGING_OFF);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE_NULL
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'MAX_FAILURES');
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE_NULL
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'MAX_RUNS');
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'STOP_ON_WINDOW_CLOSE'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'JOB_PRIORITY'
+     ,value     => 3);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE_NULL
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'SCHEDULE_LIMIT');
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'AUTO_DROP'
+     ,value     => TRUE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'RESTART_ON_RECOVERY'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'RESTART_ON_FAILURE'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB'
+     ,attribute => 'STORE_OUTPUT'
+     ,value     => TRUE);
+
+  SYS.DBMS_SCHEDULER.ENABLE
+    ( name => 'ANALYTICS.DAILY_ETL_EMAIL_JOB');
+END;
+/
+
+-- MONTHLY job: runs on the 1st of every month at 16:00 UTC
+
+BEGIN
+  SYS.DBMS_SCHEDULER.CREATE_JOB
+  (
+      job_name         => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,start_date       => SYSTIMESTAMP
+     ,repeat_interval  => 'FREQ=MONTHLY; BYMONTHDAY=1; BYHOUR=16; BYMINUTE=0; BYSECOND=0;'
+     ,end_date         => NULL
+     ,job_class        => 'DEFAULT_JOB_CLASS'
+     ,job_type         => 'STORED_PROCEDURE'
+     ,job_action       => 'MONTHLY_ETL_EMAIL'
+     ,comments         => 'Monthly email notification for SRC_VALERIR/SRC_WEBLGY job status'
+  );
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'RESTARTABLE'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'LOGGING_LEVEL'
+     ,value     => SYS.DBMS_SCHEDULER.LOGGING_OFF);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE_NULL
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'MAX_FAILURES');
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE_NULL
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'MAX_RUNS');
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'STOP_ON_WINDOW_CLOSE'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'JOB_PRIORITY'
+     ,value     => 3);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE_NULL
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'SCHEDULE_LIMIT');
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'AUTO_DROP'
+     ,value     => TRUE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'RESTART_ON_RECOVERY'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'RESTART_ON_FAILURE'
+     ,value     => FALSE);
+
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE
+    ( name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB'
+     ,attribute => 'STORE_OUTPUT'
+     ,value     => TRUE);
+
+  SYS.DBMS_SCHEDULER.ENABLE
+    ( name => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB');
+END;
+/
+
+-- Confirm both new jobs exist and are enabled
+SELECT job_name, job_action, repeat_interval, enabled
+FROM dba_scheduler_jobs
+WHERE job_name IN ('DAILY_ETL_EMAIL_JOB', 'MONTHLY_ETL_EMAIL_JOB')
+  AND owner = 'ANALYTICS';
+
+
+STEP 7: Disable the OLD combined job/procedure under ORACLE (don't drop yet)
+----------------------------------------------------------------
+-- Keep as rollback option for at least one full cycle (through a
+-- 1st-of-month run) before dropping anything.
+
+BEGIN
+  SYS.DBMS_SCHEDULER.DISABLE('ORACLE.DAILY_ETL_EMAIL_JOB');
+END;
+/
+
+-- Confirm it's disabled
+SELECT job_name, enabled
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL_EMAIL_JOB'
+  AND owner = 'ORACLE';
+
+
+STEP 8: Post-cutover monitoring
+----------------------------------------------------------------
+SELECT job_name, owner, log_date, status
+FROM dba_scheduler_job_run_details
+WHERE job_name IN ('DAILY_ETL_EMAIL_JOB', 'MONTHLY_ETL_EMAIL_JOB')
+  AND owner = 'ANALYTICS'
+ORDER BY log_date DESC
+FETCH FIRST 10 ROWS ONLY;
+
+
+STEP 9 (optional): Retire the old ORACLE objects once confident
+----------------------------------------------------------------
+-- Only after at least one full successful cycle under ANALYTICS,
+-- ideally including a 1st-of-month run.
+
+-- DROP PROCEDURE ORACLE.MNTHLY_ETL_EMAIL;
+-- BEGIN SYS.DBMS_SCHEDULER.DROP_JOB('ORACLE.DAILY_ETL_EMAIL_JOB'); END;
+-- /
