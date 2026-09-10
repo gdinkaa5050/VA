@@ -173,3 +173,18 @@ FROM dba_ind_expressions
 WHERE index_owner = 'INTG'
   AND index_name = 'LOAN_NOTES_DATETYPE_IDX'
 ORDER BY column_position;
+
+
+
+#######
+-- Object privileges specifically on the packages this procedure calls
+SELECT grantee, owner, table_name AS object_name, privilege
+FROM dba_tab_privs
+WHERE grantee = 'ORACLE'
+  AND table_name IN ('UTL_SMTP', 'UTL_TCP', 'DBMS_SCHEDULER', 'DBMS_NETWORK_ACL_ADMIN');
+
+
+SELECT grantee, table_name AS object_name, privilege
+FROM dba_tab_privs
+WHERE grantee = 'PUBLIC'
+  AND table_name IN ('UTL_SMTP', 'UTL_TCP');
