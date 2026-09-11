@@ -1,0 +1,306 @@
+================================================================
+COMBINE DAILY_ETL_NOTIFY + MONTHLY_ETL_NOTIFY INTO ONE PACKAGE
+================================================================
+-- Both procedure bodies below are used exactly as provided - no
+-- logic changes, just moved under one package so the scheduler
+-- jobs can call ETL_EMAIL_PKG.DAILY_ETL_NOTIFY / .MONTHLY_ETL_NOTIFY
+-- instead of two standalone procedures.
+--
+-- Still need 2 scheduler jobs - the package only organizes the
+-- code, it doesn't change WHEN each job needs to fire (daily vs.
+-- 1st-of-month).
+
+
+STEP 1: Create the package spec
+----------------------------------------------------------------
+CREATE OR REPLACE PACKAGE ANALYTICS.ETL_EMAIL_PKG AS
+
+    PROCEDURE daily_etl_notify;
+    PROCEDURE monthly_etl_notify;
+
+END ETL_EMAIL_PKG;
+/
+
+SHOW ERRORS PACKAGE ANALYTICS.ETL_EMAIL_PKG;
+
+
+STEP 2: Create the package body
+----------------------------------------------------------------
+CREATE OR REPLACE PACKAGE BODY ANALYTICS.ETL_EMAIL_PKG AS
+
+    PROCEDURE daily_etl_notify
+    AS
+        -- Email & SMTP
+        v_from          VARCHAR2(80) := 'sv';
+        v_recipient_1   VARCHAR2(80) := 'olov';
+        v_recipient_2   VARCHAR2(80) := 'guov';
+        v_Recipient_3   VARCHAR2(80) := 'oitlgv';
+        v_subject       VARCHAR2(80) := 'VAL+WebLGY Daily ETL';
+        v_mail_host     VARCHAR2(30) := 'smtp.va.gov';
+        v_mail_conn     UTL_SMTP.CONNECTION;
+
+        -- Line endings and separator
+        crlf CONSTANT VARCHAR2(2)   := CHR(13) || CHR(10);
+        sep  CONSTANT VARCHAR2(100) := '========================================================================';
+
+        /* Explicit cursor avoids PLS-00364 on FOR-loop records.
+           Uses ALL_* view; switch to DBA_* if you have the privileges. */
+        CURSOR c_runs IS
+            SELECT owner,
+                   job_name,
+                   output,             -- VARCHAR2(4000) (truncated)
+                   binary_output,      -- BLOB (full output)
+                   log_date,
+                   actual_start_date
+            FROM   ALL_SCHEDULER_JOB_RUN_DETAILS
+            WHERE  owner = 'ANALYTICS'
+              AND  TRUNC(actual_start_date) = TRUNC(SYSDATE - 9)  -- adjust window as needed
+            ORDER BY log_date DESC;
+
+        -- Fetch targets
+        v_owner         VARCHAR2(128);
+        v_job_name      VARCHAR2(261);
+        v_output        VARCHAR2(4000);
+        v_binary_output BLOB;
+        v_log_date      TIMESTAMP(6) WITH TIME ZONE;
+        v_actual_start  TIMESTAMP(6) WITH TIME ZONE;
+
+        -- Email streaming
+        v_clob       CLOB;               -- text from blob/output (no reformatting)
+        v_chunk      VARCHAR2(32767);
+        v_chunk_size PLS_INTEGER := 2000; -- safe SMTP chunk size
+        v_pos        PLS_INTEGER;
+        v_len        PLS_INTEGER;
+    BEGIN
+        -- Open SMTP (requires network ACL to smtp.va.gov)
+        v_mail_conn := UTL_SMTP.OPEN_CONNECTION(v_mail_host);
+        UTL_SMTP.HELO(v_mail_conn, v_mail_host);
+        UTL_SMTP.MAIL(v_mail_conn, v_from);
+        UTL_SMTP.RCPT(v_mail_conn, v_recipient_1);
+        UTL_SMTP.RCPT(v_mail_conn, v_recipient_2);
+        UTL_SMTP.RCPT(v_mail_conn, v_Recipient_3);
+        -- DATA + headers (RFC-compliant CRLF, UTF-8 MIME)
+        UTL_SMTP.OPEN_DATA(v_mail_conn);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'Date: '    || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH:MI:SS AM') || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'From: '    || v_from || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'Subject: ' || v_subject || ' Log Status' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'MIME-Version: 1.0' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'Content-Type: text/plain; charset=UTF-8' || crlf || crlf);
+
+        -- Explicit cursor loop
+        OPEN c_runs;
+        LOOP
+            FETCH c_runs
+              INTO v_owner, v_job_name, v_output, v_binary_output, v_log_date, v_actual_start;
+            EXIT WHEN c_runs%NOTFOUND;
+
+            -- Separator + Owner
+            UTL_SMTP.WRITE_DATA(v_mail_conn, sep || crlf);
+            UTL_SMTP.WRITE_DATA(v_mail_conn, 'Owner: ' || v_owner || crlf);
+            UTL_SMTP.WRITE_DATA(v_mail_conn, 'Job:   ' || v_job_name || crlf);
+            UTL_SMTP.WRITE_DATA(
+                v_mail_conn,
+                'Run:   ' || TO_CHAR(CAST(v_log_date AS DATE), 'DD-MON-YYYY HH24:MI:SS') || crlf
+            );
+            -- Source: convert BLOB -> CLOB with AL32UTF8; else fallback to OUTPUT
+            IF v_binary_output IS NOT NULL THEN
+                v_clob := TO_CLOB(v_binary_output, NLS_CHARSET_ID('AL32UTF8'));  -- full, readable text
+            ELSE
+                v_clob := CAST(v_output AS CLOB);  -- fallback (may be truncated)
+            END IF;
+
+            -- Stream output in chunks (no formatting applied to content)
+            IF v_clob IS NULL OR DBMS_LOB.GETLENGTH(v_clob) = 0 THEN
+                UTL_SMTP.WRITE_DATA(v_mail_conn, '(No Output available)');
+            ELSE
+                v_pos := 1;
+                v_len := DBMS_LOB.GETLENGTH(v_clob);
+                WHILE v_pos <= v_len LOOP
+                    v_chunk := DBMS_LOB.SUBSTR(v_clob, v_chunk_size, v_pos);
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, v_chunk);
+                    v_pos := v_pos + v_chunk_size;
+                END LOOP;
+            END IF;
+
+            -- Final separator after the log block, then continue to next job
+            UTL_SMTP.WRITE_DATA(v_mail_conn, crlf || sep || crlf);
+            UTL_SMTP.WRITE_DATA(v_mail_conn, crlf || sep || crlf);
+
+        END LOOP;
+        CLOSE c_runs;
+
+        -- Close SMTP cleanly
+        UTL_SMTP.CLOSE_DATA(v_mail_conn);
+        UTL_SMTP.QUIT(v_mail_conn);
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            -- Best-effort cleanup
+            BEGIN UTL_SMTP.CLOSE_DATA(v_mail_conn); EXCEPTION WHEN OTHERS THEN NULL; END;
+            BEGIN UTL_SMTP.QUIT(v_mail_conn);       EXCEPTION WHEN OTHERS THEN NULL; END;
+            RAISE;
+    END daily_etl_notify;
+
+
+    PROCEDURE monthly_etl_notify
+    AS
+        -- Email & SMTP
+        v_from          VARCHAR2(80) := 'sv';
+        v_recipient_1   VARCHAR2(80) := 'olov';
+        v_recipient_2   VARCHAR2(80) := 'guov';
+        v_Recipient_3   VARCHAR2(80) := 'oitlgv';
+        v_subject       VARCHAR2(80) := 'VAL+WebLGY Monthly ETL';
+        v_mail_host     VARCHAR2(30) := 'smtp.va.gov';
+        v_mail_conn     UTL_SMTP.CONNECTION;
+
+        -- Line endings and separator
+        crlf CONSTANT VARCHAR2(2)   := CHR(13) || CHR(10);
+        sep  CONSTANT VARCHAR2(100) := '========================================================================';
+
+        /* Explicit cursor avoids PLS-00364 on FOR-loop records.
+           Uses ALL_* view; switch to DBA_* if you have the privileges. */
+        CURSOR c_runs IS
+            SELECT owner,
+                   job_name,
+                   output,             -- VARCHAR2(4000) (truncated)
+                   binary_output,      -- BLOB (full output)
+                   log_date,
+                   actual_start_date
+            FROM   ALL_SCHEDULER_JOB_RUN_DETAILS
+            WHERE  owner IN ('SRC_VALERIR', 'SRC_WEBLGY')
+              AND  TRUNC(actual_start_date) = TRUNC(SYSDATE - 9)  -- adjust window as needed
+            ORDER BY log_date DESC;
+
+        -- Fetch targets
+        v_owner         VARCHAR2(128);
+        v_job_name      VARCHAR2(261);
+        v_output        VARCHAR2(4000);
+        v_binary_output BLOB;
+        v_log_date      TIMESTAMP(6) WITH TIME ZONE;
+        v_actual_start  TIMESTAMP(6) WITH TIME ZONE;
+
+        -- Email streaming
+        v_clob       CLOB;               -- text from blob/output (no reformatting)
+        v_chunk      VARCHAR2(32767);
+        v_chunk_size PLS_INTEGER := 2000; -- safe SMTP chunk size
+        v_pos        PLS_INTEGER;
+        v_len        PLS_INTEGER;
+    BEGIN
+        -- Open SMTP (requires network ACL to smtp.va.gov)
+        v_mail_conn := UTL_SMTP.OPEN_CONNECTION(v_mail_host);
+        UTL_SMTP.HELO(v_mail_conn, v_mail_host);
+        UTL_SMTP.MAIL(v_mail_conn, v_from);
+        UTL_SMTP.RCPT(v_mail_conn, v_recipient_1);
+        UTL_SMTP.RCPT(v_mail_conn, v_recipient_2);
+        UTL_SMTP.RCPT(v_mail_conn, v_Recipient_3);
+        -- DATA + headers (RFC-compliant CRLF, UTF-8 MIME)
+        UTL_SMTP.OPEN_DATA(v_mail_conn);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'Date: '    || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH:MI:SS AM') || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'From: '    || v_from || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'Subject: ' || v_subject || ' Log Status' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'MIME-Version: 1.0' || crlf);
+        UTL_SMTP.WRITE_DATA(v_mail_conn, 'Content-Type: text/plain; charset=UTF-8' || crlf || crlf);
+
+        -- Explicit cursor loop
+        OPEN c_runs;
+        LOOP
+            FETCH c_runs
+              INTO v_owner, v_job_name, v_output, v_binary_output, v_log_date, v_actual_start;
+            EXIT WHEN c_runs%NOTFOUND;
+
+            -- Separator + Owner
+            UTL_SMTP.WRITE_DATA(v_mail_conn, sep || crlf);
+            UTL_SMTP.WRITE_DATA(v_mail_conn, 'Owner: ' || v_owner || crlf);
+            UTL_SMTP.WRITE_DATA(v_mail_conn, 'Job:   ' || v_job_name || crlf);
+            UTL_SMTP.WRITE_DATA(
+                v_mail_conn,
+                'Run:   ' || TO_CHAR(CAST(v_log_date AS DATE), 'DD-MON-YYYY HH24:MI:SS') || crlf
+            );
+            -- Source: convert BLOB -> CLOB with AL32UTF8; else fallback to OUTPUT
+            IF v_binary_output IS NOT NULL THEN
+                v_clob := TO_CLOB(v_binary_output, NLS_CHARSET_ID('AL32UTF8'));  -- full, readable text
+            ELSE
+                v_clob := CAST(v_output AS CLOB);  -- fallback (may be truncated)
+            END IF;
+
+            -- Stream output in chunks (no formatting applied to content)
+            IF v_clob IS NULL OR DBMS_LOB.GETLENGTH(v_clob) = 0 THEN
+                UTL_SMTP.WRITE_DATA(v_mail_conn, '(No Output available)');
+            ELSE
+                v_pos := 1;
+                v_len := DBMS_LOB.GETLENGTH(v_clob);
+                WHILE v_pos <= v_len LOOP
+                    v_chunk := DBMS_LOB.SUBSTR(v_clob, v_chunk_size, v_pos);
+                    UTL_SMTP.WRITE_DATA(v_mail_conn, v_chunk);
+                    v_pos := v_pos + v_chunk_size;
+                END LOOP;
+            END IF;
+
+            -- Final separator after the log block, then continue to next job
+            UTL_SMTP.WRITE_DATA(v_mail_conn, crlf || sep || crlf);
+            UTL_SMTP.WRITE_DATA(v_mail_conn, crlf || sep || crlf);
+
+        END LOOP;
+        CLOSE c_runs;
+
+        -- Close SMTP cleanly
+        UTL_SMTP.CLOSE_DATA(v_mail_conn);
+        UTL_SMTP.QUIT(v_mail_conn);
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            -- Best-effort cleanup
+            BEGIN UTL_SMTP.CLOSE_DATA(v_mail_conn); EXCEPTION WHEN OTHERS THEN NULL; END;
+            BEGIN UTL_SMTP.QUIT(v_mail_conn);       EXCEPTION WHEN OTHERS THEN NULL; END;
+            RAISE;
+    END monthly_etl_notify;
+
+END ETL_EMAIL_PKG;
+/
+
+SHOW ERRORS PACKAGE BODY ANALYTICS.ETL_EMAIL_PKG;
+
+
+STEP 3: Test both package procedures manually
+----------------------------------------------------------------
+-- Redirect recipients to yourself first if not already validated
+-- this way.
+
+EXEC ANALYTICS.ETL_EMAIL_PKG.daily_etl_notify;
+EXEC ANALYTICS.ETL_EMAIL_PKG.monthly_etl_notify;
+
+
+STEP 4: Repoint both scheduler jobs to the package procedures
+----------------------------------------------------------------
+BEGIN
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE(
+    name      => 'ANALYTICS.DAILY_ETL_EMAIL_JOB',
+    attribute => 'JOB_ACTION',
+    value     => 'ETL_EMAIL_PKG.DAILY_ETL_NOTIFY'
+  );
+END;
+/
+
+BEGIN
+  SYS.DBMS_SCHEDULER.SET_ATTRIBUTE(
+    name      => 'ANALYTICS.MONTHLY_ETL_EMAIL_JOB',
+    attribute => 'JOB_ACTION',
+    value     => 'ETL_EMAIL_PKG.MONTHLY_ETL_NOTIFY'
+  );
+END;
+/
+
+-- Confirm both jobs now point to the package
+SELECT job_name, job_action, repeat_interval, enabled
+FROM dba_scheduler_jobs
+WHERE job_name IN ('DAILY_ETL_EMAIL_JOB', 'MONTHLY_ETL_EMAIL_JOB')
+  AND owner = 'ANALYTICS';
+
+
+STEP 5 (optional): Drop the old standalone procedures once confident
+----------------------------------------------------------------
+-- Only after at least one full successful cycle calling the package
+-- version (ideally including a 1st-of-month run).
+
+-- DROP PROCEDURE ANALYTICS.DAILY_ETL_NOTIFY;
+-- DROP PROCEDURE ANALYTICS.MONTHLY_ETL_NOTIFY;
