@@ -49,3 +49,8 @@ WHERE role IN (SELECT granted_role FROM dba_role_privs WHERE grantee = 'SYSDEV')
 SELECT role, granted_role
 FROM role_role_privs
 ORDER BY role;
+
+
+
+Connect — Roles CONNECT, VA_CONNECT, VANSOCSCAN_ROLE have duplicate privileges (all = CREATE SESSION only). Standardize on VA_CONNECT; revoke the others where already granted.
+Resource — Roles RESOURCE, VA_RESOURCE, VALERI_RESOURCE have duplicate privileges (VALERI_RESOURCE adds CREATE VIEW, otherwise identical). Standardize on VALERI_RESOURCE; revoke RESOURCE and VA_RESOURCE where already granted.
