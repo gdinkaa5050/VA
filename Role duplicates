@@ -54,3 +54,80 @@ ORDER BY role;
 
 Connect — Roles CONNECT, VA_CONNECT, VANSOCSCAN_ROLE have duplicate privileges (all = CREATE SESSION only). Standardize on VA_CONNECT; revoke the others where already granted.
 Resource — Roles RESOURCE, VA_RESOURCE, VALERI_RESOURCE have duplicate privileges (VALERI_RESOURCE adds CREATE VIEW, otherwise identical). Standardize on VALERI_RESOURCE; revoke RESOURCE and VA_RESOURCE where already granted.
+
+
+
+
+
+########
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'AWS_ANALYTICS_READ',
+    p_decision_code => 'APPROVE',
+    p_comment => 'Active, low risk. Roles scoped to read-only analytics access.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'DBMON_DT_AGENT',
+    p_decision_code => 'APPROVE',
+    p_comment => 'Active, low risk. Monitoring role only, no excess privilege.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'INTG',
+    p_decision_code => 'APPROVE',
+    p_comment => 'Active. Holds full export/import privilege; justification to be confirmed next cycle.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'INTGUSER',
+    p_decision_code => 'APPROVE',
+    p_comment => 'Active. Holds duplicate CONNECT/RESOURCE-tier roles; cleanup recommended.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'INTG_MERG',
+    p_decision_code => 'APPROVE',
+    p_comment => 'Active. Holds duplicate CONNECT/RESOURCE-tier roles; cleanup recommended.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'MIGR',
+    p_decision_code => 'REVOKE',
+    p_comment => 'Locked, inactive 10 months. No formal disposition; recommend deprovisioning.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'SYSDEV',
+    p_decision_code => 'REVOKE',
+    p_comment => 'Locked, inactive 17 months, holds DBA. High risk; recommend drop or downgrade.'
+  );
+END;
+/
+
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.rvw_acct(
+    p_username => 'TESTREPO',
+    p_decision_code => 'DISABLE',
+    p_comment => 'Open, never logged in, holds admin role. Recommend disable pending validation.'
+  );
+END;
+/
