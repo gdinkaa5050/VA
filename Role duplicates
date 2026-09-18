@@ -1,0 +1,51 @@
+-- 1. Last successful login (Unified Audit Trail - 12c+)
+SELECT username, MAX(event_timestamp) AS last_login
+FROM unified_audit_trail
+WHERE action_name = 'LOGON'
+AND username = 'SYSDEV'
+GROUP BY username;
+
+-- 2. Last login via DBA_USERS (fastest single-account check)
+SELECT username, account_status, lock_date, expiry_date, last_login
+FROM dba_users
+WHERE username = 'SYSDEV';
+
+-- 3. Last login (Traditional Auditing, if unified audit not enabled)
+SELECT username, MAX(timestamp) AS last_login
+FROM dba_audit_session
+WHERE username = 'SYSDEV'
+AND returncode = 0
+GROUP BY username;
+
+-- 4. Roles granted to a specific user
+SELECT grantee, granted_role
+FROM dba_role_privs
+WHERE grantee = 'SYSDEV'
+ORDER BY granted_role;
+
+-- 5. Compare privilege sets between two roles (check for subset/overlap)
+SELECT role, privilege
+FROM role_sys_privs
+WHERE role IN ('ROLE_A', 'ROLE_B')
+ORDER BY privilege;
+
+-- 6. Find roles with identical privilege sets (true duplicates)
+SELECT role, LISTAGG(privilege, ',') WITHIN GROUP (ORDER BY privilege) AS privs
+FROM role_sys_privs
+GROUP BY role
+ORDER BY privs;
+
+-- 7. Direct object grants to a user
+SELECT table_name, privilege, grantee
+FROM dba_tab_privs
+WHERE grantee = 'SYSDEV';
+
+-- 8. Object privileges already covered by the user's assigned roles
+SELECT table_name, privilege
+FROM role_tab_privs
+WHERE role IN (SELECT granted_role FROM dba_role_privs WHERE grantee = 'SYSDEV');
+
+-- 9. Nested/overlapping roles (role granted to another role)
+SELECT role, granted_role
+FROM role_role_privs
+ORDER BY role;
