@@ -1,29 +1,29 @@
 BEGIN
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'ATG_DBO', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. AITC_CONNECT role to be removed, not a finding. LGYDSO-8755 created. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'DBMON_DT_AGENT', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions required for monitoring RDS. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. Account is used for RDS monitoring. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'DBO_LGY', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. AITC_CONNECT role to be removed, not a finding. LGYDSO-8755 created. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'DMOSTAR', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. AITC_CONNECT role to be removed, not a finding. LGYDSO-8755 created. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'LGY', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. AITC_CONNECT role to be removed, not a finding. LGYDSO-8755 created. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'LGYDMS_SRC', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions required for replication. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. Account is used for replication. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'LGYMOD', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions required for LGY Modernization effort. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. Account is used for LGY Modernization. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'SAHSHA', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions adequate for RO access to support SAHSHA project. Account is valid. Project will be used in the near future. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. Account is valid and will be used in the near future for SAHSHA project. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'SPR', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions adequate for RO access to support SAHSHA project. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. RO access supports SAHSHA project. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'SYSDEV', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Access required for Jenkins builds. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. Account is used for Jenkins builds. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VAWL', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. AITC_APP, AITC_CONNECT roles to be removed, not a finding. LGYDSO-8755 created. Access appropriate for FFPS functionality. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. AITC_APP,AITC_CONNECT roles are assigned and should be revoked. LGYDSO-8755 created. Access is appropriate for FFPS functionality. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VA_ADMIN', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions adequate for RO access to support SAHSHA project. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. RO access supports SAHSHA project. Comments added by OITWASJOHNSO');
   AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VA_AUDIT', p_approval => 'APPROVED',
-    p_comment => 'Review Complete. Permissions adequate for RO access to support SAHSHA project. Comments by OITWASJOHNSO');
+    p_comment => 'Review Complete. No anomalies identified. RO access supports SAHSHA project. Comments added by OITWASJOHNSO');
 END;
 /
