@@ -27,3 +27,37 @@ BEGIN
     p_comment => 'Review Complete. No anomalies identified. RO access supports SAHSHA project. Comments added by OITWASJOHNSO');
 END;
 /
+
+
+
+
+########
+BEGIN
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'ATG_DBO', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VA_AUDIT', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VA_ADMIN', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VAWL', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. AITC_APP,AITC_CONNECT roles are assigned and should be revoked. LGYDSO-8755 created. Access is appropriate for FFPS functionality. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'VAFSC_WEB_SVC', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. RO access supports FSC project. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'SYSDEV', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. SYSDEV account to be decommissioned. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'LGY_ANALYTICS', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. DB Link dependency exists in LGA Core. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'LGYDMS_TRGT', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. Account is used for replication. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'LGY', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'DMOSTAR', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'DBO_LGY', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. AITC_CONNECT role is assigned and should be revoked. LGYDSO-8755 created. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'DBMON_DT_AGENT', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. Account is used for RDS monitoring. Comments added by OITWASJOHNSO');
+  AUDSEC.svc_acct_rvw_pkg.approve_acct(p_username => 'AWS_ANALYTICS_READ', p_approval => 'APPROVED',
+    p_comment => 'Review Complete. No anomalies identified. RO access supports replication to Analytics Oracle Core. Comments added by OITWASJOHNSO');
+END;
+/
