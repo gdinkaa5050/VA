@@ -129,3 +129,52 @@ FROM unified_audit_trail
 WHERE event_timestamp > SYSTIMESTAMP - INTERVAL '90' DAY
   AND (action_name LIKE 'CREATE%' OR action_name LIKE 'ALTER%' OR action_name LIKE 'DROP%')
 ORDER BY event_timestamp DESC;
+
+
+
+
+#№#########
+--Account dormancy 
+-- All non-Oracle accounts with status + dormancy flag
+SELECT username,
+       account_status,
+       last_login,
+       created,
+       expiry_date,
+       lock_date,
+       CASE
+         WHEN last_login IS NULL THEN 'NEVER LOGGED IN'
+         WHEN last_login < SYSTIMESTAMP - INTERVAL '90' DAY THEN 'DORMANT (90+ days)'
+         ELSE 'ACTIVE'
+       END AS dormancy_flag
+FROM dba_users
+WHERE oracle_maintained = 'N'
+ORDER BY
+  CASE account_status
+    WHEN 'OPEN' THEN 1
+    WHEN 'EXPIRED' THEN 2
+    WHEN 'EXPIRED(GRACE)' THEN 2
+    WHEN 'LOCKED' THEN 3
+    WHEN 'LOCKED(TIMED)' THEN 3
+    ELSE 4
+  END,
+  last_login NULLS FIRST;
+
+
+-- 1. OPEN accounts that are dormant (should be locked)
+SELECT username, last_login, created FROM dba_users
+WHERE oracle_maintained = 'N' AND account_status = 'OPEN'
+  AND (last_login IS NULL OR last_login < SYSTIMESTAMP - INTERVAL '90' DAY)
+ORDER BY last_login NULLS FIRST;
+
+-- 2. LOCKED accounts — confirm they're locked deliberately, not just stale
+SELECT username, account_status, lock_date, last_login FROM dba_users
+WHERE oracle_maintained = 'N'
+  AND account_status LIKE 'LOCKED%'
+ORDER BY lock_date;
+
+-- 3. EXPIRED accounts — confirm these are actually being reset/removed, not sitting indefinitely
+SELECT username, account_status, expiry_date, last_login FROM dba_users
+WHERE oracle_maintained = 'N'
+  AND account_status LIKE 'EXPIRED%'
+ORDER BY expiry_date;
