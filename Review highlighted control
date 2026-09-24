@@ -70,3 +70,18 @@ SELECT tablespace_name,
        ROUND(used_percent, 1) AS pct_of_max
 FROM dba_tablespace_usage_metrics
 ORDER BY used_percent DESC;
+
+
+###########
+SELECT df.tablespace_name,
+       ROUND(SUM(df.bytes)/1073741824, 1) AS alloc_gb,
+       ROUND((SUM(df.bytes) - NVL(MAX(fs.free_bytes), 0))/1073741824, 1) AS used_gb,
+       ROUND(SUM(CASE WHEN df.autoextensible = 'YES'
+                      THEN df.maxbytes ELSE df.bytes END)/1073741824, 1) AS max_gb,
+       MAX(df.autoextensible) AS autoext
+FROM dba_data_files df
+LEFT JOIN (SELECT tablespace_name, SUM(bytes) free_bytes
+           FROM dba_free_space GROUP BY tablespace_name) fs
+  ON fs.tablespace_name = df.tablespace_name
+GROUP BY df.tablespace_name
+ORDER BY used_gb DESC;
