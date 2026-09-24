@@ -134,3 +134,34 @@ LEFT JOIN dba_procedures p
 WHERE  h.sql_id = '2juxs6j082zax'
 GROUP  BY r.period, p.owner, p.object_name, p.procedure_name, NVL(h.event,'ON CPU')
 ORDER  BY ash_seconds DESC;
+
+
+
+
+
+######
+-- 1. How the package finds and reads files (look for directory names, Java, listdir)
+SELECT line, text
+FROM   dba_source
+WHERE  owner = 'INTG' AND name = 'SERVICER_FILE_API'
+AND    REGEXP_LIKE(UPPER(text),
+       'UTL_FILE|FOPEN|FREMOVE|FRENAME|LISTDIR|DIRECTORY|JAVA|FILE_LIST|WHEN OTHERS')
+ORDER  BY type, line;
+
+-- 2. Java objects in INTG and SYS (OJVM patched)
+SELECT owner, object_type, status, COUNT(*)
+FROM   dba_objects
+WHERE  object_type LIKE 'JAVA%' AND owner IN ('INTG','SYS')
+GROUP  BY owner, object_type, status
+ORDER  BY owner, status;
+
+-- 3. Directory objects INTG can use
+SELECT d.directory_name, d.directory_path, p.privilege
+FROM   dba_directories d
+JOIN   dba_tab_privs p ON p.table_name = d.directory_name
+WHERE  p.grantee = 'INTG';
+
+-- 4. Files currently in each directory (replace name from query 3)
+SELECT filename, type, filesize, mtime
+FROM   TABLE(rdsadmin.rds_file_util.listdir('YOUR_DIRECTORY'))
+ORDER  BY mtime DESC;
