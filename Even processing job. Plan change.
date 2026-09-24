@@ -165,3 +165,24 @@ WHERE  p.grantee = 'INTG';
 SELECT filename, type, filesize, mtime
 FROM   TABLE(rdsadmin.rds_file_util.listdir('YOUR_DIRECTORY'))
 ORDER  BY mtime DESC;
+
+
+#####
+--error logs
+-- 1. S3 task logs for the last 10 days (one per download)
+SELECT filename, filesize, mtime
+FROM   TABLE(rdsadmin.rds_file_util.listdir('BDUMP'))
+WHERE  filename LIKE 'dbtask-%'
+AND    mtime > SYSDATE - 10
+ORDER  BY mtime;
+
+-- 2. Read one log from before (e.g. 9/22 ~08:00) and one from after (9/23 or 9/24)
+SELECT text
+FROM   TABLE(rdsadmin.rds_file_util.read_text_file('BDUMP','dbtask-XXXXXXXX.log'));
+
+-- 3. The download code and its error handler
+SELECT line, text
+FROM   dba_source
+WHERE  owner = 'INTG' AND name = 'SERVICER_FILE_API' AND type = 'PACKAGE BODY'
+AND    line BETWEEN 2140 AND 2230
+ORDER  BY line;
