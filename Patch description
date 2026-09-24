@@ -1,0 +1,61 @@
+-- 1. Current version
+SELECT banner_full FROM v$version;
+SELECT instance_name, version_full, startup_time FROM v$instance;
+
+-- 2. SQL patches applied (most recent first)
+SELECT patch_id, patch_type, action, status, action_time,
+       source_version, target_version, description
+FROM   dba_registry_sqlpatch
+ORDER  BY action_time DESC;
+
+-- 3. Registry history
+SELECT action_time, action, version, comments
+FROM   dba_registry_history
+ORDER  BY action_time DESC NULLS LAST;
+
+-- 4. Component status
+SELECT comp_id, comp_name, version_full, status
+FROM   dba_registry;
+
+-- 5. Invalid objects
+SELECT owner, object_type, object_name, last_ddl_time
+FROM   dba_objects
+WHERE  status = 'INVALID'
+ORDER  BY owner, object_type, object_name;
+
+-- 6. Alert log around the patch window
+SELECT originating_timestamp, message_text
+FROM   v$diag_alert_ext
+WHERE  originating_timestamp BETWEEN
+       TIMESTAMP '2026-09-23 00:30:00 +00:00' AND TIMESTAMP '2026-09-23 04:30:00 +00:00'
+ORDER  BY originating_timestamp;
+
+-- 7. OPatch inventory (summary, then bug-level detail)
+SELECT * FROM TABLE(rdsadmin.rds_file_util.read_text_file('BDUMP','lsinventory-dbv.txt'));
+SELECT * FROM TABLE(rdsadmin.rds_file_util.read_text_file('BDUMP','lsinventory_detail-dbv.txt'));
+
+-- 8. Optimizer fixes not at default + key optimizer params
+SELECT bugno, value, optimizer_feature_enable, description
+FROM   v$system_fix_control
+WHERE  is_default = 0;
+
+SELECT name, value
+FROM   v$parameter
+WHERE  name IN ('optimizer_features_enable','compatible',
+                'optimizer_adaptive_plans','optimizer_adaptive_statistics');
+
+-- 9. Nightly job runs, 7 days before the patch through now (replace job name)
+SELECT job_name, status, actual_start_date, run_duration, error#, additional_info
+FROM   dba_scheduler_job_run_details
+WHERE  job_name LIKE 'YOUR_JOB_NAME%'
+AND    actual_start_date >= TIMESTAMP '2026-09-16 00:00:00 +00:00'
+ORDER  BY actual_start_date;
+
+-- 10. Plan history for a specific SQL_ID (AWR – Diagnostics Pack)
+SELECT sn.end_interval_time, s.plan_hash_value, s.executions_delta,
+       ROUND(s.elapsed_time_delta/1e6/NULLIF(s.executions_delta,0),2) sec_per_exec
+FROM   dba_hist_sqlstat s
+JOIN   dba_hist_snapshot sn ON sn.snap_id = s.snap_id AND sn.dbid = s.dbid
+WHERE  s.sql_id = '&sql_id'
+AND    sn.end_interval_time >= TIMESTAMP '2026-09-16 00:00:00'
+ORDER  BY sn.end_interval_time;
