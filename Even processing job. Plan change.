@@ -220,3 +220,28 @@ ORDER  BY day, status;
 SELECT intg.config_api.get_sys_config('s3_bucket_name')   bucket,
        intg.config_api.get_sys_config('jenkins_job_name') || '/servicer_files/' prefix
 FROM   dual;
+
+
+
+#######
+-- 1. Instance restart history (how long it had been up before the patch)
+SELECT instance_number, startup_time
+FROM   dba_hist_database_instance
+ORDER  BY startup_time DESC;
+
+-- 2. Files and processing time per day
+SELECT TRUNC(created_date) day,
+       COUNT(*) files,
+       MIN(process_start_date) first_start,
+       MAX(process_end_date)   last_end,
+       ROUND((MAX(process_end_date) - MIN(process_start_date)) * 1440) total_min
+FROM   intg.servicer_file_queue
+WHERE  created_date >= SYSDATE - 10
+GROUP  BY TRUNC(created_date)
+ORDER  BY day;
+
+-- 3. FAILED or error rows (should be none)
+SELECT created_date, servicer_file_name, status, error_message
+FROM   intg.servicer_file_queue
+WHERE  created_date >= SYSDATE - 10
+AND   (status <> 'PROCESSED' OR error_message IS NOT NULL);
