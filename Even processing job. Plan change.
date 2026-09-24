@@ -81,3 +81,56 @@ SELECT name, value
 FROM   v$parameter
 WHERE  name IN ('optimizer_features_enable','compatible',
                 'optimizer_adaptive_plans','optimizer_adaptive_statistics');
+
+
+
+
+##########
+-- A. What the job was doing (CPU vs waits), before vs after
+WITH runs AS (
+  SELECT log_id, actual_start_date, run_duration,
+         TO_NUMBER(REGEXP_SUBSTR(session_id,'[^,]+',1,1)) sid,
+         TO_NUMBER(REGEXP_SUBSTR(session_id,'[^,]+',1,2)) serial#,
+         CASE WHEN actual_start_date < TIMESTAMP '2026-09-23 01:44:00 +00:00'
+              THEN 'BEFORE' ELSE 'AFTER' END period
+  FROM   dba_scheduler_job_run_details
+  WHERE  owner = 'INTG' AND job_name = 'EVENT_PROCESSING'
+  AND    actual_start_date >= SYSDATE - 8
+)
+SELECT r.period,
+       NVL(h.event,'ON CPU') event,
+       NVL(h.wait_class,'CPU') wait_class,
+       COUNT(*)*10 ash_seconds,
+       ROUND(COUNT(*)*10 / MAX(CASE r.period WHEN 'BEFORE' THEN 6 ELSE 2 END)) sec_per_run
+FROM   runs r
+JOIN   dba_hist_active_sess_history h
+       ON  h.session_id = r.sid AND h.session_serial# = r.serial#
+       AND h.sample_time BETWEEN CAST(r.actual_start_date AT TIME ZONE 'UTC' AS TIMESTAMP)
+                             AND CAST((r.actual_start_date + r.run_duration) AT TIME ZONE 'UTC' AS TIMESTAMP)
+GROUP  BY r.period, NVL(h.event,'ON CPU'), NVL(h.wait_class,'CPU')
+ORDER  BY event, r.period DESC;
+
+-- B. Which PL/SQL procedure the time was spent in
+WITH runs AS ( /* same runs CTE as above */
+  SELECT log_id, actual_start_date, run_duration,
+         TO_NUMBER(REGEXP_SUBSTR(session_id,'[^,]+',1,1)) sid,
+         TO_NUMBER(REGEXP_SUBSTR(session_id,'[^,]+',1,2)) serial#,
+         CASE WHEN actual_start_date < TIMESTAMP '2026-09-23 01:44:00 +00:00'
+              THEN 'BEFORE' ELSE 'AFTER' END period
+  FROM   dba_scheduler_job_run_details
+  WHERE  owner = 'INTG' AND job_name = 'EVENT_PROCESSING'
+  AND    actual_start_date >= SYSDATE - 8
+)
+SELECT r.period, p.owner, p.object_name, p.procedure_name,
+       NVL(h.event,'ON CPU') event,
+       COUNT(*)*10 ash_seconds
+FROM   runs r
+JOIN   dba_hist_active_sess_history h
+       ON  h.session_id = r.sid AND h.session_serial# = r.serial#
+       AND h.sample_time BETWEEN CAST(r.actual_start_date AT TIME ZONE 'UTC' AS TIMESTAMP)
+                             AND CAST((r.actual_start_date + r.run_duration) AT TIME ZONE 'UTC' AS TIMESTAMP)
+LEFT JOIN dba_procedures p
+       ON  p.object_id = h.plsql_object_id AND p.subprogram_id = h.plsql_subprogram_id
+WHERE  h.sql_id = '2juxs6j082zax'
+GROUP  BY r.period, p.owner, p.object_name, p.procedure_name, NVL(h.event,'ON CPU')
+ORDER  BY ash_seconds DESC;
