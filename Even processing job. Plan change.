@@ -186,3 +186,37 @@ FROM   dba_source
 WHERE  owner = 'INTG' AND name = 'SERVICER_FILE_API' AND type = 'PACKAGE BODY'
 AND    line BETWEEN 2140 AND 2230
 ORDER  BY line;
+
+
+
+
+#######
+-- 1. Servicer task logs: find the ~08:0x UTC ones for 9/21-9/24 and compare size
+SELECT filename, filesize, mtime
+FROM   TABLE(rdsadmin.rds_file_util.listdir('BDUMP'))
+WHERE  filename LIKE 'dbtask-%'
+AND    mtime > SYSDATE - 5
+ORDER  BY mtime;
+
+-- 2. Read the 9/22 and 9/24 ~08:0x logs (summary lines only)
+SELECT text
+FROM   TABLE(rdsadmin.rds_file_util.read_text_file('BDUMP','dbtask-XXXXXXXX.log'))
+WHERE  text NOT LIKE '%downloaded the file%'
+AND    ROWNUM <= 50;
+
+-- Count files downloaded in each log
+SELECT COUNT(*) files_downloaded
+FROM   TABLE(rdsadmin.rds_file_util.read_text_file('BDUMP','dbtask-XXXXXXXX.log'))
+WHERE  LOWER(text) LIKE '%download%' AND LOWER(text) LIKE '%servicer%';
+
+-- 3. Files queued per day and status (the definitive answer)
+SELECT TRUNC(created_date) day, status, COUNT(*) files
+FROM   intg.servicer_file_queue
+WHERE  created_date >= SYSDATE - 10
+GROUP  BY TRUNC(created_date), status
+ORDER  BY day, status;
+
+-- 4. S3 bucket and prefix the job is using
+SELECT intg.config_api.get_sys_config('s3_bucket_name')   bucket,
+       intg.config_api.get_sys_config('jenkins_job_name') || '/servicer_files/' prefix
+FROM   dual;
