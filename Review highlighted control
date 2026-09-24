@@ -1,0 +1,72 @@
+-- =====================================================================
+-- FY2026 Annual Oracle RDS Review - drill-down for highlighted controls
+-- Run in Toad as a script (F5). Each query opens its own result tab.
+-- =====================================================================
+
+-- 1. Powerful role assignments
+SELECT rp.grantee, rp.granted_role, rp.admin_option,
+       u.account_status, u.last_login
+FROM dba_role_privs rp
+LEFT JOIN dba_users u ON u.username = rp.grantee
+WHERE rp.granted_role IN ('DBA','IMP_FULL_DATABASE','EXP_FULL_DATABASE',
+      'DATAPUMP_EXP_FULL_DATABASE','DATAPUMP_IMP_FULL_DATABASE',
+      'SELECT_CATALOG_ROLE','EXECUTE_CATALOG_ROLE')
+  AND rp.grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y')
+  AND rp.grantee NOT IN (SELECT role FROM dba_roles WHERE oracle_maintained = 'Y')
+ORDER BY rp.granted_role, rp.grantee;
+
+-- 2. High-risk system privileges
+SELECT grantee, privilege, admin_option
+FROM dba_sys_privs
+WHERE (privilege LIKE '%ANY%'
+       OR privilege IN ('ALTER SYSTEM','ALTER DATABASE','CREATE USER','ALTER USER',
+                        'DROP USER','BECOME USER','GRANT ANY PRIVILEGE','GRANT ANY ROLE',
+                        'EXEMPT ACCESS POLICY','AUDIT SYSTEM'))
+  AND grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y')
+  AND grantee NOT IN (SELECT role FROM dba_roles WHERE oracle_maintained = 'Y')
+ORDER BY grantee, privilege;
+
+-- 3. Privileges and roles granted WITH ADMIN OPTION
+SELECT grantee, privilege AS priv_or_role, 'SYSTEM PRIV' AS grant_type
+FROM dba_sys_privs
+WHERE admin_option = 'YES'
+  AND grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y')
+  AND grantee NOT IN (SELECT role FROM dba_roles WHERE oracle_maintained = 'Y')
+UNION ALL
+SELECT grantee, granted_role, 'ROLE'
+FROM dba_role_privs
+WHERE admin_option = 'YES'
+  AND grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y')
+  AND grantee NOT IN (SELECT role FROM dba_roles WHERE oracle_maintained = 'Y')
+ORDER BY 1, 2;
+
+-- 4. PUBLIC object privileges on non-Oracle schemas
+SELECT owner, table_name, privilege
+FROM dba_tab_privs
+WHERE grantee = 'PUBLIC'
+  AND owner IN (SELECT username FROM dba_users WHERE oracle_maintained = 'N')
+  AND owner <> 'RDSADMIN'
+ORDER BY privilege, owner, table_name;
+
+-- 5-7. Password profile settings
+SELECT profile, resource_name, limit
+FROM dba_profiles
+WHERE resource_name IN ('PASSWORD_LIFE_TIME','FAILED_LOGIN_ATTEMPTS',
+                        'PASSWORD_REUSE_MAX','PASSWORD_REUSE_TIME')
+ORDER BY profile, resource_name;
+
+-- 5-7b. Non-Oracle users on profiles with an UNLIMITED password setting
+SELECT u.username, u.account_status, u.profile, p.resource_name, p.limit
+FROM dba_users u
+JOIN dba_profiles p ON p.profile = u.profile
+WHERE u.oracle_maintained = 'N'
+  AND p.resource_name IN ('PASSWORD_LIFE_TIME','FAILED_LOGIN_ATTEMPTS',
+                          'PASSWORD_REUSE_MAX','PASSWORD_REUSE_TIME')
+  AND p.limit = 'UNLIMITED'
+ORDER BY u.profile, u.username, p.resource_name;
+
+-- 8. Tablespace usage vs. maximum size
+SELECT tablespace_name,
+       ROUND(used_percent, 1) AS pct_of_max
+FROM dba_tablespace_usage_metrics
+ORDER BY used_percent DESC;
