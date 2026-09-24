@@ -1,0 +1,83 @@
+-- =========================================================
+-- EVENT_PROCESSING: patch impact investigation (INTG)
+-- Patch window: 2026-09-23 ~01:44 UTC (RU 19.31 -> 19.32)
+-- =========================================================
+
+-- 1. Confirm server time zone and patches applied
+SELECT SYSTIMESTAMP FROM dual;
+
+SELECT patch_id, patch_type, action, status, action_time, description
+FROM   dba_registry_sqlpatch
+ORDER  BY action_time DESC;
+
+-- 2. Run history summary: before vs after
+SELECT CASE WHEN actual_start_date < TIMESTAMP '2026-09-23 01:44:00 +00:00'
+            THEN 'BEFORE' ELSE 'AFTER' END period,
+       COUNT(*) runs,
+       ROUND(AVG(EXTRACT(HOUR FROM run_duration)*60
+               + EXTRACT(MINUTE FROM run_duration)),0) avg_min,
+       MIN(run_duration) min_dur,
+       MAX(run_duration) max_dur
+FROM   dba_scheduler_job_run_details
+WHERE  owner = 'INTG' AND job_name = 'EVENT_PROCESSING'
+AND    actual_start_date >= SYSDATE - 21
+GROUP  BY CASE WHEN actual_start_date < TIMESTAMP '2026-09-23 01:44:00 +00:00'
+               THEN 'BEFORE' ELSE 'AFTER' END;
+
+-- 3a. Run detail with errors/output
+SELECT log_id,
+       CASE WHEN actual_start_date < TIMESTAMP '2026-09-23 01:44:00 +00:00'
+            THEN 'BEFORE' ELSE 'AFTER' END period,
+       actual_start_date, run_duration, status, error#, errors, output
+FROM   dba_scheduler_job_run_details
+WHERE  owner = 'INTG' AND job_name = 'EVENT_PROCESSING'
+AND    actual_start_date >= SYSDATE - 14
+ORDER  BY actual_start_date;
+
+-- 3b. Invalid objects in INTG
+SELECT object_name, object_type, status, last_ddl_time
+FROM   dba_objects
+WHERE  owner = 'INTG' AND status <> 'VALID';
+
+-- 4. Where each run spent time (ASH by job session) - Diagnostics Pack
+WITH runs AS (
+  SELECT log_id, actual_start_date, run_duration,
+         TO_NUMBER(REGEXP_SUBSTR(session_id,'[^,]+',1,1)) sid,
+         TO_NUMBER(REGEXP_SUBSTR(session_id,'[^,]+',1,2)) serial#,
+         CASE WHEN actual_start_date < TIMESTAMP '2026-09-23 01:44:00 +00:00'
+              THEN 'BEFORE' ELSE 'AFTER' END period
+  FROM   dba_scheduler_job_run_details
+  WHERE  owner = 'INTG' AND job_name = 'EVENT_PROCESSING'
+  AND    actual_start_date >= SYSDATE - 8
+)
+SELECT r.period, h.sql_id, h.sql_plan_hash_value,
+       COUNT(DISTINCT r.log_id) runs,
+       COUNT(*)*10 ash_seconds
+FROM   runs r
+JOIN   dba_hist_active_sess_history h
+       ON  h.session_id      = r.sid
+       AND h.session_serial# = r.serial#
+       AND h.sample_time BETWEEN CAST(r.actual_start_date AT TIME ZONE 'UTC' AS TIMESTAMP)
+                             AND CAST((r.actual_start_date + r.run_duration) AT TIME ZONE 'UTC' AS TIMESTAMP)
+GROUP  BY r.period, h.sql_id, h.sql_plan_hash_value
+ORDER  BY h.sql_id, r.period DESC;
+
+-- 5a. Per-day stats for a SQL_ID from step 4 (plan, execs, rows)
+SELECT TRUNC(sn.begin_interval_time) day, s.plan_hash_value,
+       SUM(s.executions_delta)     execs,
+       SUM(s.rows_processed_delta) rows_processed,
+       ROUND(SUM(s.elapsed_time_delta)/1e6) ela_sec
+FROM   dba_hist_sqlstat s
+JOIN   dba_hist_snapshot sn ON sn.snap_id = s.snap_id AND sn.dbid = s.dbid
+WHERE  s.sql_id = '&sql_id'
+GROUP  BY TRUNC(sn.begin_interval_time), s.plan_hash_value
+ORDER  BY day;
+
+-- 5b. Execution plans (old and new) for that SQL_ID
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_AWR('&sql_id'));
+
+-- 6. Optimizer settings after the patch
+SELECT name, value
+FROM   v$parameter
+WHERE  name IN ('optimizer_features_enable','compatible',
+                'optimizer_adaptive_plans','optimizer_adaptive_statistics');
