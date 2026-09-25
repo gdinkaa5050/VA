@@ -1,0 +1,283 @@
+/* =====================================================================
+   Oracle on RDS - Quarterly Review Evidence - QUERY BY QUERY (Toad)
+   ---------------------------------------------------------------------
+   HOW TO USE:
+     1. Click inside ONE query and press F9 (or Ctrl+Enter).
+     2. Right-click the result grid > Export Dataset > Excel/CSV.
+        Save as the name shown in "Save as:" above the query.
+     3. Move to the next query.
+   Empty result = nothing found. Screenshot it as evidence that the check ran.
+
+   Before you start, replace these values where you see "-- CHANGE":
+     'ADMIN'            -> your RDS master username
+     'HR','PAYROLL'     -> your PII/PHI/payment schemas
+   All queries are read-only.
+   ===================================================================== */
+
+
+/* ===================== 1. INVENTORY & BASELINE ===================== */
+
+-- Q01  Save as: 01a_database_info
+SELECT name, db_unique_name, open_mode, log_mode, created FROM v$database;
+
+-- Q02  Save as: 01b_instance_info
+SELECT instance_name, host_name, version_full, startup_time, status FROM v$instance;
+
+-- Q03  Save as: 01c_non_default_parameters
+SELECT name, value FROM v$parameter WHERE isdefault = 'FALSE' ORDER BY name;
+
+-- Q04  Save as: 01d_installed_components
+SELECT comp_id, comp_name, version, status FROM dba_registry ORDER BY comp_id;
+
+
+/* ===================== 2. ENGINE & PATCHING ===================== */
+
+-- Q05  Save as: 02a_version
+SELECT banner_full FROM v$version;
+
+-- Q06  Save as: 02b_patch_history
+SELECT patch_id, action, status, description, action_time
+FROM   dba_registry_sqlpatch
+ORDER  BY action_time DESC;
+
+
+/* ===================== 3. ENCRYPTION ===================== */
+
+-- Q07  Save as: 03a_session_protocol   (expect TCPS if SSL option used)
+SELECT sys_context('USERENV','NETWORK_PROTOCOL') AS this_session_protocol FROM dual;
+
+-- Q08  Save as: 03b_native_encryption_sessions
+SELECT network_service_banner, COUNT(*) AS sessions
+FROM   v$session_connect_info
+WHERE  LOWER(network_service_banner) LIKE '%encryption%'
+   OR  LOWER(network_service_banner) LIKE '%crypto%'
+   OR  LOWER(network_service_banner) LIKE '%checksum%'
+GROUP  BY network_service_banner;
+
+-- Q09  Save as: 03c_tablespace_encryption   (NO is normal if using KMS storage encryption)
+SELECT tablespace_name, encrypted FROM dba_tablespaces ORDER BY tablespace_name;
+
+
+/* ===================== 4. NETWORK ACCESS ===================== */
+/* Main evidence is in AWS (see steps at the bottom of this file).
+   These queries prove WHERE connections actually come from.
+   Every IP should belong to an approved app server / subnet / bastion. */
+
+-- Q31  Save as: 04a_connection_sources_90d
+SELECT REGEXP_SUBSTR(authentication_type, 'HOST=([^)]+)', 1, 1, NULL, 1) AS client_ip,
+       userhost,
+       dbusername,
+       COUNT(*)             AS logons,
+       MAX(event_timestamp) AS last_seen
+FROM   unified_audit_trail
+WHERE  action_name = 'LOGON'
+AND    event_timestamp > SYSTIMESTAMP - 90
+GROUP  BY REGEXP_SUBSTR(authentication_type, 'HOST=([^)]+)', 1, 1, NULL, 1),
+          userhost, dbusername
+ORDER  BY client_ip, logons DESC;
+
+-- Q32  Save as: 04b_current_sessions_by_machine
+SELECT machine, program, username, COUNT(*) AS sessions
+FROM   v$session
+WHERE  type = 'USER'
+GROUP  BY machine, program, username
+ORDER  BY machine;
+
+
+/* ===================== 6. AUDIT & LOGGING ===================== */
+
+-- Q10  Save as: 06a_audit_mode
+SELECT parameter, value FROM v$option WHERE parameter = 'Unified Auditing'
+UNION ALL
+SELECT name, value FROM v$parameter WHERE name IN ('audit_trail','audit_sys_operations');
+
+-- Q11  Save as: 06b_enabled_audit_policies
+SELECT * FROM audit_unified_enabled_policies ORDER BY 1;
+
+-- Q12  Save as: 06c_audit_volume_last_7_days   (proves trail is being written)
+SELECT TRUNC(event_timestamp) AS day, COUNT(*) AS events
+FROM   unified_audit_trail
+WHERE  event_timestamp > SYSTIMESTAMP - 7
+GROUP  BY TRUNC(event_timestamp)
+ORDER  BY 1;
+
+
+/* ===================== 7. RDS MANAGED ACCOUNTS ===================== */
+
+-- Q13  Save as: 07a_rds_account_logons_90d
+SELECT dbusername, client_program_name, userhost, COUNT(*) AS logons,
+       MAX(event_timestamp) AS last_seen
+FROM   unified_audit_trail
+WHERE  action_name = 'LOGON'
+AND    dbusername IN ('RDSADMIN','RDSSEC','RDS_DATAGUARD','ADMIN')   -- CHANGE 'ADMIN'
+AND    event_timestamp > SYSTIMESTAMP - 90
+GROUP  BY dbusername, client_program_name, userhost
+ORDER  BY 1, 4 DESC;
+
+
+/* ===================== 8. PERFORMANCE & CAPACITY ===================== */
+
+-- Q14  Save as: 08a_tablespace_usage
+SELECT m.tablespace_name,
+       ROUND(m.used_space * t.block_size / 1024/1024/1024, 2)      AS used_gb,
+       ROUND(m.tablespace_size * t.block_size / 1024/1024/1024, 2) AS max_gb,
+       ROUND(m.used_percent, 1)                                     AS used_pct
+FROM   dba_tablespace_usage_metrics m
+JOIN   dba_tablespaces t ON t.tablespace_name = m.tablespace_name
+ORDER  BY used_pct DESC;
+
+
+/* ============ 9/10. ACCOUNT CLASSIFICATION & OWNERSHIP ============ */
+
+-- Q15  Save as: 09_account_list   (add Type/Owner columns in Excel for catalogue)
+SELECT username, account_status, profile, authentication_type,
+       created, last_login, default_tablespace
+FROM   dba_users
+WHERE  oracle_maintained = 'N'
+ORDER  BY username;
+
+
+/* ===================== 11. PASSWORD & PROFILE ===================== */
+
+-- Q16  Save as: 11a_password_profiles
+SELECT profile, resource_name, limit
+FROM   dba_profiles
+WHERE  resource_type = 'PASSWORD'
+ORDER  BY profile, resource_name;
+
+-- Q17  Save as: 11b_profiles_in_use
+SELECT profile, COUNT(*) AS users
+FROM   dba_users
+WHERE  oracle_maintained = 'N'
+GROUP  BY profile
+ORDER  BY 2 DESC;
+
+
+/* ===================== 12. DORMANT ACCOUNTS ===================== */
+
+-- Q18  Save as: 12_dormant_accounts_90d
+SELECT username, account_status, last_login, created, profile
+FROM   dba_users
+WHERE  oracle_maintained = 'N'
+AND    account_status = 'OPEN'
+AND   (last_login IS NULL OR last_login < SYSDATE - 90)
+ORDER  BY last_login NULLS FIRST;
+
+
+/* ===================== 13. LEAST PRIVILEGE ===================== */
+
+-- Q19  Save as: 13a_powerful_system_privs
+SELECT grantee, privilege, admin_option
+FROM   dba_sys_privs
+WHERE (privilege LIKE '%ANY%' OR privilege IN
+       ('ALTER SYSTEM','ALTER DATABASE','BECOME USER','GRANT ANY PRIVILEGE',
+        'GRANT ANY ROLE','EXEMPT ACCESS POLICY','AUDIT SYSTEM'))
+AND    grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y'
+                       UNION SELECT role FROM dba_roles WHERE oracle_maintained = 'Y')
+ORDER  BY grantee, privilege;
+
+-- Q20  Save as: 13b_powerful_roles
+SELECT grantee, granted_role, admin_option
+FROM   dba_role_privs
+WHERE  granted_role IN ('DBA','IMP_FULL_DATABASE','EXP_FULL_DATABASE',
+                        'DATAPUMP_EXP_FULL_DATABASE','DATAPUMP_IMP_FULL_DATABASE',
+                        'SELECT_CATALOG_ROLE','AUDIT_ADMIN','AUDIT_VIEWER')
+AND    grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y'
+                       UNION SELECT role FROM dba_roles WHERE oracle_maintained = 'Y')
+ORDER  BY granted_role, grantee;
+
+-- Q21  Save as: 13c_public_grants
+SELECT owner, table_name, privilege
+FROM   dba_tab_privs
+WHERE  grantee = 'PUBLIC'
+AND    owner IN (SELECT username FROM dba_users WHERE oracle_maintained = 'N')
+ORDER  BY owner, table_name;
+
+
+/* ===================== 14. SEGREGATION OF DUTIES ===================== */
+
+-- Q22  Save as: 14_sod_conflicts
+SELECT grantee,
+       LISTAGG(granted_role, ', ') WITHIN GROUP (ORDER BY granted_role) AS roles
+FROM   dba_role_privs
+WHERE  granted_role IN ('DBA','AUDIT_ADMIN','AUDIT_VIEWER','RESOURCE')
+AND    grantee IN (SELECT username FROM dba_users WHERE oracle_maintained = 'N')
+GROUP  BY grantee
+HAVING COUNT(DISTINCT CASE WHEN granted_role = 'DBA' THEN 'DBA'
+                           WHEN granted_role LIKE 'AUDIT%' THEN 'AUDIT'
+                           ELSE 'DEV' END) > 1
+ORDER  BY grantee;
+
+
+/* ===================== 15. SENSITIVE DATA ACCESS ===================== */
+
+-- Q23  Save as: 15a_sensitive_table_grants
+SELECT owner, table_name, grantee, privilege
+FROM   dba_tab_privs
+WHERE  owner IN ('HR','PAYROLL')   -- CHANGE to your sensitive schemas
+ORDER  BY owner, table_name, grantee;
+
+-- Q24  Save as: 15b_read_any_table
+SELECT grantee, privilege FROM dba_sys_privs
+WHERE  privilege IN ('SELECT ANY TABLE','READ ANY TABLE')
+AND    grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y'
+                       UNION SELECT role FROM dba_roles WHERE oracle_maintained = 'Y');
+
+
+/* ===================== 16. PRIVILEGED ACTIVITY AUDIT ===================== */
+
+-- Q25  Save as: 16_privileged_audit_coverage
+SELECT DISTINCT p.policy_name, p.audit_option, p.audit_option_type
+FROM   audit_unified_policies p
+JOIN   audit_unified_enabled_policies e ON e.policy_name = p.policy_name
+WHERE  p.audit_option IN ('CREATE USER','ALTER USER','DROP USER','GRANT','REVOKE',
+                          'CREATE ROLE','ALTER SYSTEM','CREATE DATABASE LINK',
+                          'ALTER DATABASE LINK','ALL')
+ORDER  BY 1, 2;
+
+
+/* ===================== 17. DATABASE LINKS ===================== */
+
+-- Q26  Save as: 17a_db_links
+SELECT owner, db_link, username, host, created FROM dba_db_links ORDER BY owner, db_link;
+
+-- Q27  Save as: 17b_plaintext_creds_in_code
+SELECT owner, name, type, line
+FROM   dba_source
+WHERE  UPPER(text) LIKE '%IDENTIFIED BY%'
+AND    owner IN (SELECT username FROM dba_users WHERE oracle_maintained = 'N');
+
+
+/* ===================== 18. QUOTAS ===================== */
+
+-- Q28  Save as: 18a_unlimited_tablespace
+SELECT grantee, 'DIRECT' AS granted_via FROM dba_sys_privs
+WHERE  privilege = 'UNLIMITED TABLESPACE'
+AND    grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y')
+UNION ALL
+SELECT rp.grantee, 'ROLE: ' || rp.granted_role
+FROM   dba_role_privs rp
+JOIN   dba_sys_privs sp ON sp.grantee = rp.granted_role
+WHERE  sp.privilege = 'UNLIMITED TABLESPACE'
+AND    rp.grantee NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y');
+
+-- Q29  Save as: 18b_unlimited_quotas
+SELECT username, tablespace_name, ROUND(bytes/1024/1024) AS used_mb
+FROM   dba_ts_quotas
+WHERE  max_bytes = -1
+AND    username IN (SELECT username FROM dba_users WHERE oracle_maintained = 'N')
+ORDER  BY username;
+
+
+/* ===================== 19. CHANGE CONTROL ===================== */
+
+-- Q30  Save as: 19_user_grant_changes_90d   (match each row to a ticket)
+SELECT event_timestamp, dbusername, action_name, object_name,
+       userhost, client_program_name,
+       DBMS_LOB.SUBSTR(sql_text, 200, 1) AS sql_snippet
+FROM   unified_audit_trail
+WHERE  action_name IN ('CREATE USER','ALTER USER','DROP USER','GRANT','REVOKE',
+                       'CREATE ROLE','DROP ROLE','CREATE DATABASE LINK',
+                       'DROP DATABASE LINK','CREATE PROFILE','ALTER PROFILE')
+AND    event_timestamp > SYSTIMESTAMP - 90
+ORDER  BY event_timestamp;
