@@ -1,0 +1,56 @@
+-- The job itself
+SELECT owner, job_name, job_action, enabled, state, last_start_date
+FROM   dba_scheduler_jobs
+WHERE  job_name = 'EVENT_PROCESSING';
+
+-- The proc the job calls
+SELECT owner, object_name, procedure_name
+FROM   dba_procedures
+WHERE  owner = 'INTG'
+AND    object_name = 'SERVICER_FILE_API'
+AND    procedure_name = 'RUN_NIGHTLY_JOB';
+
+-- Any wrapper procs that start the job manually
+SELECT owner, name, type, line, text
+FROM   dba_source
+WHERE  (UPPER(text) LIKE '%RUN_JOB%' OR UPPER(text) LIKE '%RUN_NIGHTLY_JOB%')
+AND    owner NOT IN ('SYS','SYSTEM','RDSADMIN');
+
+
+-- Account status
+SELECT username, account_status, expiry_date
+FROM   dba_users WHERE username = 'VHAAT';
+
+-- Direct and role-based EXECUTE grants on INTG objects
+SELECT grantee, owner, table_name, privilege
+FROM   dba_tab_privs
+WHERE  owner = 'INTG'
+AND    grantee IN (SELECT 'VHAAT' FROM dual
+                   UNION
+                   SELECT granted_role FROM dba_role_privs
+                   START WITH grantee = 'VHAAT'
+                   CONNECT BY PRIOR granted_role = grantee);
+
+-- Scheduler system privileges
+SELECT grantee, privilege
+FROM   dba_sys_privs
+WHERE  grantee = 'VHAAT'
+AND    privilege IN ('CREATE ANY JOB','MANAGE SCHEDULER','CREATE JOB');
+
+
+
+GRANT EXECUTE ON INTG.<wrapper_proc> TO VHAAT;
+
+
+CREATE OR REPLACE PROCEDURE intg.run_event_processing AS
+BEGIN
+  DBMS_SCHEDULER.RUN_JOB('INTG.EVENT_PROCESSING', use_current_session => FALSE);
+END;
+/
+GRANT EXECUTE ON intg.run_event_processing TO VHAAT;
+
+
+--s3 config in prod mirror 
+SELECT intg.config_api.get_sys_config('s3_bucket_name')   bucket,
+       intg.config_api.get_sys_config('jenkins_job_name') prefix
+FROM   dual;
