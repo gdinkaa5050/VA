@@ -54,3 +54,38 @@ GRANT EXECUTE ON intg.run_event_processing TO VHAAT;
 SELECT intg.config_api.get_sys_config('s3_bucket_name')   bucket,
        intg.config_api.get_sys_config('jenkins_job_name') prefix
 FROM   dual;
+
+
+
+--find the procedure
+-- 1. Any code (outside the package itself) that calls the proc or starts the job
+SELECT owner, name, type, line, TRIM(text) text
+FROM   dba_source
+WHERE  (UPPER(text) LIKE '%RUN_NIGHTLY_JOB%'
+        OR UPPER(text) LIKE '%EVENT_PROCESSING%')
+AND    NOT (owner = 'INTG' AND name = 'SERVICER_FILE_API')
+ORDER  BY owner, name, line;
+
+-- 2. Any object that depends on SERVICER_FILE_API (catches wrappers even if the source is wrapped/obfuscated)
+SELECT owner, name, type
+FROM   dba_dependencies
+WHERE  referenced_owner = 'INTG'
+AND    referenced_name  = 'SERVICER_FILE_API'
+AND    NOT (owner = 'INTG' AND name = 'SERVICER_FILE_API');
+
+-- 3. Scheduler jobs or programs that call it (besides EVENT_PROCESSING)
+SELECT owner, job_name AS name, 'JOB' kind, job_action AS action, enabled
+FROM   dba_scheduler_jobs
+WHERE  UPPER(job_action) LIKE '%RUN_NIGHTLY_JOB%'
+UNION ALL
+SELECT owner, program_name, 'PROGRAM', program_action, enabled
+FROM   dba_scheduler_programs
+WHERE  UPPER(program_action) LIKE '%RUN_NIGHTLY_JOB%';
+
+-- 4. Procedures with a likely wrapper name, created by anyone
+SELECT owner, object_name, object_type, status, created, last_ddl_time
+FROM   dba_objects
+WHERE  object_type IN ('PROCEDURE','PACKAGE')
+AND   (object_name LIKE '%NIGHTLY%' OR object_name LIKE '%EVENT_PROC%'
+       OR object_name LIKE '%RUN_EVENT%')
+ORDER  BY created DESC;
