@@ -1,0 +1,20 @@
+SELECT line, text FROM dba_source
+WHERE owner='AUDSEC' AND name='SVC_ACCT_RVW_PKG' AND type='PACKAGE BODY'
+  AND line BETWEEN 290 AND 320 ORDER BY line;
+
+
+SELECT host, lower_port, upper_port, principal, privilege
+FROM dba_host_aces WHERE principal='AUDSEC';
+
+
+BEGIN
+  DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(
+    host       => 'your.smtp.host',   -- from step 1
+    lower_port => 25,                 -- from step 1
+    upper_port => 25,
+    ace        => xs$ace_type(
+                    privilege_list => xs$name_list('connect','smtp'),
+                    principal_name => 'AUDSEC',
+                    principal_type => xs_acl.ptype_db));
+END;
+/
