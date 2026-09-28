@@ -18,3 +18,10 @@ BEGIN
                     principal_type => xs_acl.ptype_db));
 END;
 /
+
+
+############
+SELECT AUDSEC.svc_acct_rvw_pkg.build_rpt(2) AS rpt FROM dual;
+
+SELECT * FROM AUDSEC.svc_acct_cycl_summary WHERE cycl_id = 2;
+SELECT * FROM AUDSEC.svc_acct_cycl WHERE cycl_id = 2;
