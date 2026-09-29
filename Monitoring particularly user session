@@ -1,0 +1,110 @@
+/* =====================================================================
+   Monitoring kit: AWS_ANALYTICS_READ (Mule job) on Valeri Prod
+   Target:  INTG.MESSAGE_QUEUE full scans (7 sessions, hash/MOD split)
+   Engine:  Oracle on Amazon RDS
+
+   Licensing note:
+     Sections 1-4 and 6 use V$ views and unified auditing (no pack needed).
+     Section 5 (DBA_HIST_*) requires the Oracle Diagnostics Pack.
+   ===================================================================== */
+
+
+/* ---------------------------------------------------------------------
+   1. LIVE: who is connected and what are they running
+      MACHINE / PROGRAM / MODULE identify the Mule host and job.
+   --------------------------------------------------------------------- */
+SELECT sid, serial#, status, machine, program, module,
+       sql_id, event, last_call_et AS secs_in_call,
+       logon_time
+  FROM v$session
+ WHERE username = 'AWS_ANALYTICS_READ'
+ ORDER BY logon_time;
+
+
+/* ---------------------------------------------------------------------
+   2. LIVE: progress of the full table scans
+   --------------------------------------------------------------------- */
+SELECT sid, opname, target, sofar, totalwork,
+       ROUND(sofar / NULLIF(totalwork, 0) * 100, 1) AS pct_done,
+       time_remaining AS secs_remaining
+  FROM v$session_longops
+ WHERE username = 'AWS_ANALYTICS_READ'
+   AND sofar < totalwork;
+
+
+/* ---------------------------------------------------------------------
+   3. BASELINE: cost per execution of their SQL
+      Save this output as the "before" numbers.
+   --------------------------------------------------------------------- */
+SELECT sql_id, executions,
+       ROUND(elapsed_time / 1e6 / NULLIF(executions, 0))  AS secs_per_exec,
+       ROUND(physical_read_bytes / POWER(1024, 3), 1)      AS gb_read_total,
+       buffer_gets,
+       SUBSTR(sql_text, 1, 100)                            AS sql_text_start
+  FROM v$sqlstats
+ WHERE sql_id IN (SELECT sql_id FROM v$session
+                   WHERE username = 'AWS_ANALYTICS_READ'
+                     AND sql_id IS NOT NULL)
+    OR UPPER(sql_text) LIKE '%MESSAGE_QUEUE%STANDARD_HASH%';
+
+-- Execution plan for a given SQL_ID (look for PARTITION RANGE ALL):
+-- SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR('&sql_id', NULL, 'TYPICAL'));
+
+
+/* ---------------------------------------------------------------------
+   4. LOGIN TRACKING: record every logon (run once to set up)
+   --------------------------------------------------------------------- */
+CREATE AUDIT POLICY track_analytics_logon ACTIONS LOGON;
+AUDIT POLICY track_analytics_logon BY aws_analytics_read;
+
+-- Check logins anytime:
+SELECT event_timestamp, os_username, userhost, client_program_name
+  FROM unified_audit_trail
+ WHERE dbusername = 'AWS_ANALYTICS_READ'
+ ORDER BY event_timestamp DESC;
+
+-- To remove later:
+-- NOAUDIT POLICY track_analytics_logon BY aws_analytics_read;
+-- DROP AUDIT POLICY track_analytics_logon;
+
+
+/* ---------------------------------------------------------------------
+   5. HISTORY: past runs from AWR/ASH (Diagnostics Pack required)
+      Alternative with no license: RDS console > Performance Insights,
+      slice by "Users".
+   --------------------------------------------------------------------- */
+SELECT TRUNC(h.sample_time, 'HH24') AS hour,
+       h.sql_id, h.machine, h.program,
+       COUNT(*) * 10                AS approx_active_secs
+  FROM dba_hist_active_sess_history h
+ WHERE h.user_id = (SELECT user_id FROM dba_users
+                     WHERE username = 'AWS_ANALYTICS_READ')
+   AND h.sample_time > SYSDATE - 7
+ GROUP BY TRUNC(h.sample_time, 'HH24'), h.sql_id, h.machine, h.program
+ ORDER BY hour DESC;
+
+
+/* ---------------------------------------------------------------------
+   6. FIX PREP: existing indexes and partitioning on MESSAGE_QUEUE
+      Are CREATED_DATE / STATUS_DATE indexed?
+   --------------------------------------------------------------------- */
+SELECT i.index_name, i.partitioned, c.column_name, c.column_position
+  FROM dba_indexes i
+  JOIN dba_ind_columns c
+    ON c.index_owner = i.owner AND c.index_name = i.index_name
+ WHERE i.table_owner = 'INTG'
+   AND i.table_name  = 'MESSAGE_QUEUE'
+ ORDER BY i.index_name, c.column_position;
+
+SELECT partitioning_type, column_name
+  FROM dba_part_tables t
+  JOIN dba_part_key_columns k
+    ON k.owner = t.owner AND k.name = t.table_name
+ WHERE t.owner = 'INTG' AND t.table_name = 'MESSAGE_QUEUE';
+
+-- Candidate rewrite to test (single session, no hash split):
+-- SELECT * FROM INTG.MESSAGE_QUEUE
+--  WHERE created_date >= DATE '2026-09-28' AND created_date < DATE '2026-09-29'
+-- UNION
+-- SELECT * FROM INTG.MESSAGE_QUEUE
+--  WHERE status_date  >= DATE '2026-09-28' AND status_date  < DATE '2026-09-29';
