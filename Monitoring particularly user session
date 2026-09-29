@@ -108,3 +108,32 @@ SELECT partitioning_type, column_name
 -- UNION
 -- SELECT * FROM INTG.MESSAGE_QUEUE
 --  WHERE status_date  >= DATE '2026-09-28' AND status_date  < DATE '2026-09-29';
+
+
+
+
+
+
+SELECT sql_id, SUBSTR(sql_text,1,200) sql_text, last_active_time, executions
+  FROM v$sqlstats
+ WHERE sql_id = '6g2yp9mvv00xp';
+
+SELECT sid, prev_sql_id, prev_exec_start
+  FROM v$session
+ WHERE username = 'AWS_ANALYTICS_READ';
+
+
+SELECT sid, target, start_time, last_update_time,
+       ROUND((last_update_time - start_time)*1440) AS minutes
+  FROM v$session_longops
+ WHERE username = 'AWS_ANALYTICS_READ'
+ ORDER BY start_time DESC;
+
+
+SELECT sql_id, executions, last_active_time,
+       ROUND(elapsed_time/1e6/NULLIF(executions,0)) secs_per_exec
+  FROM v$sqlstats
+ WHERE UPPER(sql_text) LIKE '%MESSAGE_QUEUE%STANDARD_HASH%';
+
+SELECT sql_id, SUBSTR(sql_text,1,300) FROM dba_hist_sqltext
+ WHERE sql_id IN ('8f7b25vdvvn2k','3p5w2xxpq9ds4');
