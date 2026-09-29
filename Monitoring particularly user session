@@ -146,3 +146,12 @@ SELECT DISTINCT machine, program, module, action, client_id
  WHERE user_id = (SELECT user_id FROM dba_users
                    WHERE username = 'AWS_ANALYTICS_READ')
    AND machine LIKE '100.103.118.%';
+
+
+
+SELECT s.sid, s.program, s.machine, q.sql_id,
+       DBMS_LOB.SUBSTR(q.sql_fulltext, 200, 1) AS sql_text
+  FROM v$session s
+  JOIN v$sql q ON q.sql_id IN (s.sql_id, s.prev_sql_id)
+ WHERE s.username = 'AWS_ANALYTICS_READ'
+   AND s.program LIKE 'repctl%';
