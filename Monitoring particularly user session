@@ -137,3 +137,12 @@ SELECT sql_id, executions, last_active_time,
 
 SELECT sql_id, SUBSTR(sql_text,1,300) FROM dba_hist_sqltext
  WHERE sql_id IN ('8f7b25vdvvn2k','3p5w2xxpq9ds4');
+
+
+
+
+SELECT DISTINCT machine, program, module, action, client_id
+  FROM dba_hist_active_sess_history
+ WHERE user_id = (SELECT user_id FROM dba_users
+                   WHERE username = 'AWS_ANALYTICS_READ')
+   AND machine LIKE '100.103.118.%';
