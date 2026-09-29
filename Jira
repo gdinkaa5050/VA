@@ -1,0 +1,15 @@
+1. SYSDEV – Locked account with DBA role, inactive since 4/10/2025
+Priority: High
+Description: The SYSDEV account is locked, holds the DBA role, and has been inactive since 4/10/2025. Remediation: drop the user or downgrade the role.
+2. TESTREPO – Open account with UT_REPO_ADMINISTRATOR role, never logged in
+Priority: Medium
+Description: The TESTREPO account is open, holds UT_REPO_ADMINISTRATOR, and has never logged in. Remediation: remove the account, or lock it until authorized use.
+3. MIGR – Locked account inactive for about 10 months
+Priority: Medium
+Description: The MIGR account is locked and has been inactive for about 10 months. Remediation: investigate and possibly remove.
+4. Duplicate privileges: CONNECT, VA_CONNECT, VANSOCSCAN_ROLE
+Priority: Medium (not stated in the findings)
+Description: All three roles grant only CREATE SESSION. Remediation: standardize on VA_CONNECT and revoke the others.
+5. Duplicate privileges: RESOURCE, VA_RESOURCE, VALERI_RESOURCE
+Priority: Medium (not stated in the findings)
+Description: The three roles are identical except that VALERI_RESOURCE also grants CREATE VIEW. Remediation: standardize per business requirement and remove the other roles.
