@@ -14,3 +14,11 @@ WHERE <date_col> >= TRUNC(SYSDATE) - 1
 ORDER BY <date_col> DESC;
 
 
+SELECT line, text FROM dba_source
+WHERE owner = 'ANALYTICS'
+AND name = 'ETL_EMAIL_PKG'
+AND type = 'PACKAGE BODY'
+AND line BETWEEN 200 AND 295
+ORDER BY line;
+
+
