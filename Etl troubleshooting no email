@@ -242,3 +242,8 @@ SELECT 'OBLGR' t, COUNT(*) cnt FROM src_weblgy.oblgr UNION ALL
 SELECT 'PERSON', COUNT(*) FROM src_weblgy.person UNION ALL
 SELECT 'ELIGIBILITY_RECORD', COUNT(*) FROM src_weblgy.eligibility_record UNION ALL
 SELECT 'MTGE_LOAN_FNDNG_FEE_OBLGR', COUNT(*) FROM src_weblgy.mtge_loan_fndng_fee_oblgr;
+
+
+
+SELECT value FROM nls_database_parameters
+WHERE parameter = 'NLS_CHARACTERSET';
