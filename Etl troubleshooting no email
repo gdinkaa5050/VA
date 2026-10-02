@@ -49,4 +49,5 @@ FROM all_scheduler_job_run_details
 WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY')
 AND actual_start_date >= TRUNC(SYSDATE, 'MM');
 
-
+SELECT object_type, status FROM dba_objects
+WHERE owner = 'ANALYTICS' AND object_name = 'ETL_EMAIL_PKG';
