@@ -121,3 +121,121 @@ SELECT 'OBLGR' t, COUNT(*) FROM src_weblgy.oblgr UNION ALL
 SELECT 'PERSON', COUNT(*) FROM src_weblgy.person UNION ALL
 SELECT 'ELIGIBILITY_RECORD', COUNT(*) FROM src_weblgy.eligibility_record UNION ALL
 SELECT 'MTGE_LOAN_FNDNG_FEE_OBLGR', COUNT(*) FROM src_weblgy.mtge_loan_fndng_fee_oblgr;
+
+
+
+
+-- =====================================================================
+-- FIX: SRC_WEBLGY.ELIGIBILITY_RECORD_LOAN is empty
+-- ---------------------------------------------------------------------
+-- Problem:
+--   SRC_WEBLGY_DATAPUMP_JOB (Oct 1, 05:00 UTC) reported SUCCEEDED, but
+--   ELIGIBILITY_RECORD_LOAN failed to load with:
+--   ORA-12899: value too large for column STREET_NBR (actual: 14, maximum: 10)
+--   Result: the table has 0 rows.
+--
+-- Impact:
+--   ANALYTICS ETL is NOT affected (it reads OBLGR, PERSON, ELIGIBILITY_RECORD
+--   and MTGE_LOAN_FNDNG_FEE_OBLGR, which all loaded fine). Only users or
+--   reports that query this table directly are affected.
+--
+-- Fix:
+--   1. Widen STREET_NBR
+--   2. Check how the Data Pump job loads (to make sure the fix survives)
+--   3. Rerun the load
+--   4. Verify
+--
+-- NOTE: This is PROD. Get change approval before running Steps 1 and 3.
+--       Run each step on its own (highlight it and press F9 in Toad).
+-- =====================================================================
+
+
+-- ---------------------------------------------------------------------
+-- STEP 0 (optional): Current column definition, for the change record
+--   Expected now: DATA_LENGTH = 10, CHAR_USED = B (bytes)
+-- ---------------------------------------------------------------------
+SELECT data_type, data_length, char_length, char_used
+FROM   dba_tab_columns
+WHERE  owner       = 'SRC_WEBLGY'
+AND    table_name  = 'ELIGIBILITY_RECORD_LOAN'
+AND    column_name = 'STREET_NBR';
+
+
+-- ---------------------------------------------------------------------
+-- STEP 1: Widen the column
+--   Ideally match the source system's column size; 20 CHAR is a safe
+--   default if you can't confirm it. Using CHAR (not BYTE) means the
+--   limit counts characters, so special characters can't push a short
+--   value over the limit. Widening a VARCHAR2 is instant and safe.
+-- ---------------------------------------------------------------------
+ALTER TABLE SRC_WEBLGY.ELIGIBILITY_RECORD_LOAN
+MODIFY STREET_NBR VARCHAR2(20 CHAR);
+
+-- Verify: expect CHAR_LENGTH = 20, CHAR_USED = C
+SELECT data_type, data_length, char_length, char_used
+FROM   dba_tab_columns
+WHERE  owner       = 'SRC_WEBLGY'
+AND    table_name  = 'ELIGIBILITY_RECORD_LOAN'
+AND    column_name = 'STREET_NBR';
+
+
+-- ---------------------------------------------------------------------
+-- STEP 2: Check how the Data Pump job loads tables
+--   Look at TABLE_EXISTS_ACTION in the results:
+--     TRUNCATE or APPEND -> your wider column survives the reload. Continue.
+--     REPLACE            -> the table is recreated from the source definition
+--                           and Step 1 would be undone. STOP and fix it on
+--                           the source side instead.
+-- ---------------------------------------------------------------------
+SELECT line, text
+FROM   dba_source
+WHERE  owner = 'SRC_WEBLGY'
+AND    name  = 'WEBLGY_DATAPUMP_PKG'
+AND    type  = 'PACKAGE BODY'
+AND    REGEXP_LIKE(text, 'TABLE_EXISTS_ACTION|DBMS_DATAPUMP.OPEN|ADD_FILE|NETWORK', 'i')
+ORDER  BY line;
+
+
+-- ---------------------------------------------------------------------
+-- STEP 3a: Check how long the job normally takes
+--   The job reloads ALL SRC_WEBLGY tables, including the ones DAILY_ETL
+--   reads. Make sure it will finish well before 14:00 UTC, when
+--   DAILY_ETL starts, so the ETL doesn't read half-loaded tables.
+-- ---------------------------------------------------------------------
+SELECT actual_start_date, run_duration, status
+FROM   dba_scheduler_job_run_details
+WHERE  job_name = 'SRC_WEBLGY_DATAPUMP_JOB'
+ORDER  BY actual_start_date DESC;
+
+
+-- ---------------------------------------------------------------------
+-- STEP 3b: Rerun the load (runs in the background)
+-- ---------------------------------------------------------------------
+EXEC DBMS_SCHEDULER.RUN_JOB('SRC_WEBLGY.SRC_WEBLGY_DATAPUMP_JOB', use_current_session => FALSE);
+
+-- Monitor: a row here means it is still running
+SELECT job_name, elapsed_time
+FROM   dba_scheduler_running_jobs
+WHERE  job_name = 'SRC_WEBLGY_DATAPUMP_JOB';
+
+
+-- ---------------------------------------------------------------------
+-- STEP 4: Verify (after the job finishes)
+-- ---------------------------------------------------------------------
+
+-- 4a. The table should now have rows (expect > 0)
+SELECT COUNT(*) FROM SRC_WEBLGY.ELIGIBILITY_RECORD_LOAN;
+
+-- 4b. Latest run: expect SUCCEEDED and FIRST_ORA empty
+SELECT actual_start_date, status,
+       REGEXP_SUBSTR(output, 'ORA-\d{5}[^-]*') AS first_ora
+FROM   dba_scheduler_job_run_details
+WHERE  job_name = 'SRC_WEBLGY_DATAPUMP_JOB'
+ORDER  BY actual_start_date DESC
+FETCH  FIRST 1 ROW ONLY;
+
+-- 4c. The other tables DAILY_ETL depends on should still be populated
+SELECT 'OBLGR' t, COUNT(*) cnt FROM src_weblgy.oblgr UNION ALL
+SELECT 'PERSON', COUNT(*) FROM src_weblgy.person UNION ALL
+SELECT 'ELIGIBILITY_RECORD', COUNT(*) FROM src_weblgy.eligibility_record UNION ALL
+SELECT 'MTGE_LOAN_FNDNG_FEE_OBLGR', COUNT(*) FROM src_weblgy.mtge_loan_fndng_fee_oblgr;
