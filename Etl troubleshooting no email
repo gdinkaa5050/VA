@@ -1,0 +1,16 @@
+SELECT name, line, text FROM dba_source
+WHERE owner = 'ANALYTICS' AND name = 'ETL_EMAIL_PKG'
+AND UPPER(text) LIKE '%NO JOB RUNS FOUND%';
+
+
+SELECT job_name, status, actual_start_date, run_duration
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'DAILY_ETL'
+ORDER BY log_date DESC;
+
+
+SELECT * FROM <log_table>
+WHERE <date_col> >= TRUNC(SYSDATE) - 1
+ORDER BY <date_col> DESC;
+
+
