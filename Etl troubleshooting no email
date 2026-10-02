@@ -51,3 +51,14 @@ AND actual_start_date >= TRUNC(SYSDATE, 'MM');
 
 SELECT object_type, status FROM dba_objects
 WHERE owner = 'ANALYTICS' AND object_name = 'ETL_EMAIL_PKG';
+
+
+
+
+--error
+SELECT status, error#,
+       REGEXP_SUBSTR(output, 'ORA-\d{5}[^-]*', 1, 1) AS first_ora,
+       output
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'SRC_WEBLGY_DATAPUMP_JOB'
+AND actual_start_date >= TRUNC(SYSDATE, 'MM');
