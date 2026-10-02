@@ -211,6 +211,9 @@ ORDER  BY actual_start_date DESC;
 -- ---------------------------------------------------------------------
 -- STEP 3b: Rerun the load (runs in the background)
 -- ---------------------------------------------------------------------
+SELECT job_name, elapsed_time FROM dba_scheduler_running_jobs
+WHERE job_name IN ('DAILY_ETL', 'SRC_WEBLGY_DATAPUMP_JOB');
+
 EXEC DBMS_SCHEDULER.RUN_JOB('SRC_WEBLGY.SRC_WEBLGY_DATAPUMP_JOB', use_current_session => FALSE);
 
 -- Monitor: a row here means it is still running
