@@ -38,5 +38,15 @@ FROM dba_scheduler_jobs
 WHERE job_name = 'MONTHLY_ETL_EMAIL_JOB';
 
 
+--change recently 
+SELECT object_type, last_ddl_time FROM dba_objects
+WHERE owner = 'ANALYTICS' AND object_name = 'ETL_EMAIL_PKG';
+
+AND actual_start_date >= TRUNC(SYSDATE, 'MM')
+
+SELECT owner, job_name, status, actual_start_date
+FROM all_scheduler_job_run_details
+WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY')
+AND actual_start_date >= TRUNC(SYSDATE, 'MM');
 
 
