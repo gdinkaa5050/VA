@@ -254,3 +254,12 @@ SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET';
 SELECT street_nbr, LENGTH(street_nbr) chars, LENGTHB(street_nbr) bytes
 FROM <source_table>
 WHERE REGEXP_LIKE(street_nbr, '[^ -~]');
+
+
+
+
+SELECT line, text FROM dba_source
+WHERE owner = 'SRC_WEBLGY' AND name = 'WEBLGY_DATAPUMP_PKG'
+AND type = 'PACKAGE BODY'
+AND line BETWEEN 1 AND 120
+ORDER BY line;
