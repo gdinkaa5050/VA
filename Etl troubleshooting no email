@@ -281,3 +281,34 @@ SELECT street_nbr, LENGTH(street_nbr) AS chars, LENGTHB(street_nbr) AS bytes_her
 FROM dbo_lgy.eligibility_record_loan@weblgy_oar_db
 WHERE REGEXP_LIKE(street_nbr, '[^ -~]')
    OR LENGTH(street_nbr) > 10;
+
+
+
+
+
+
+##########
+SELECT job_name FROM dba_scheduler_running_jobs
+WHERE job_name IN ('DAILY_ETL', 'SRC_WEBLGY_DATAPUMP_JOB');
+
+
+ALTER TABLE SRC_WEBLGY.ELIGIBILITY_RECORD_LOAN
+MODIFY (STREET_NBR VARCHAR2(10 CHAR));
+
+SELECT char_length, char_used FROM dba_tab_columns
+WHERE owner = 'SRC_WEBLGY' AND table_name = 'ELIGIBILITY_RECORD_LOAN'
+AND column_name = 'STREET_NBR';
+
+EXEC DBMS_SCHEDULER.RUN_JOB('SRC_WEBLGY.SRC_WEBLGY_DATAPUMP_JOB', use_current_session => FALSE);
+
+SELECT COUNT(*) FROM SRC_WEBLGY.ELIGIBILITY_RECORD_LOAN;
+
+SELECT actual_start_date, status,
+       REGEXP_SUBSTR(output, 'ORA-\d{5}[^-]*') AS first_ora
+FROM dba_scheduler_job_run_details
+WHERE job_name = 'SRC_WEBLGY_DATAPUMP_JOB'
+ORDER BY actual_start_date DESC FETCH FIRST 1 ROW ONLY;
+
+
+
+EXEC DBMS_SCHEDULER.RUN_JOB('ANALYTICS.MONTHLY_ETL_EMAIL_JOB', use_current_session => TRUE);
