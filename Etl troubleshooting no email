@@ -248,3 +248,9 @@ SELECT 'MTGE_LOAN_FNDNG_FEE_OBLGR', COUNT(*) FROM src_weblgy.mtge_loan_fndng_fee
 SELECT value FROM nls_database_parameters
 WHERE parameter = 'NLS_CHARACTERSET';
 SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET';
+
+
+
+SELECT street_nbr, LENGTH(street_nbr) chars, LENGTHB(street_nbr) bytes
+FROM <source_table>
+WHERE REGEXP_LIKE(street_nbr, '[^ -~]');
