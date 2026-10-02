@@ -1,4 +1,4 @@
-wSELECT name, line, text FROM dba_source
+SELECT name, line, text FROM dba_source
 WHERE owner = 'ANALYTICS' AND name = 'ETL_EMAIL_PKG'
 AND UPPER(text) LIKE '%NO JOB RUNS FOUND%';
 
@@ -263,3 +263,21 @@ WHERE owner = 'SRC_WEBLGY' AND name = 'WEBLGY_DATAPUMP_PKG'
 AND type = 'PACKAGE BODY'
 AND line BETWEEN 1 AND 120
 ORDER BY line;
+
+
+
+eeeeeee
+SELECT value FROM nls_database_parameters@weblgy_oar_db
+WHERE parameter = 'NLS_CHARACTERSET';
+
+SELECT data_type, data_length, char_length, char_used
+FROM all_tab_columns@weblgy_oar_db
+WHERE owner = 'DBO_LGY'
+AND table_name = 'ELIGIBILITY_RECORD_LOAN'
+AND column_name = 'STREET_NBR';
+
+
+SELECT street_nbr, LENGTH(street_nbr) AS chars, LENGTHB(street_nbr) AS bytes_here
+FROM dbo_lgy.eligibility_record_loan@weblgy_oar_db
+WHERE REGEXP_LIKE(street_nbr, '[^ -~]')
+   OR LENGTH(street_nbr) > 10;
