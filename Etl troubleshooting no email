@@ -1,4 +1,4 @@
-SELECT name, line, text FROM dba_source
+wSELECT name, line, text FROM dba_source
 WHERE owner = 'ANALYTICS' AND name = 'ETL_EMAIL_PKG'
 AND UPPER(text) LIKE '%NO JOB RUNS FOUND%';
 
@@ -247,3 +247,4 @@ SELECT 'MTGE_LOAN_FNDNG_FEE_OBLGR', COUNT(*) FROM src_weblgy.mtge_loan_fndng_fee
 
 SELECT value FROM nls_database_parameters
 WHERE parameter = 'NLS_CHARACTERSET';
+SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET';
