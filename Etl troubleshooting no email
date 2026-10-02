@@ -21,4 +21,22 @@ AND type = 'PACKAGE BODY'
 AND line BETWEEN 200 AND 295
 ORDER BY line;
 
+FROM  ALL_SCHEDULER_JOB_RUN_DETAILS
+WHERE owner IN ('SRC_VALERIR', 'SRC_WEBLGY')
+AND   TRUNC(actual_start_date) = TRUNC(SYSDATE - 10)
+
+-- What runs actually exist for those owners?
+SELECT owner, job_name, status, actual_start_date
+FROM dba_scheduler_job_run_details
+WHERE owner IN ('SRC_VALERIR','SRC_WEBLGY')
+AND actual_start_date >= SYSDATE - 35
+ORDER BY actual_start_date DESC;
+
+-- When is the monthly email normally scheduled?
+SELECT repeat_interval, next_run_date
+FROM dba_scheduler_jobs
+WHERE job_name = 'MONTHLY_ETL_EMAIL_JOB';
+
+
+
 
