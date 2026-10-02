@@ -107,3 +107,10 @@ WHERE owner = 'ANALYTICS' AND name = 'ETL_API_PKG'
 AND type = 'PACKAGE BODY'
 AND line BETWEEN 220 AND 1542
 AND REGEXP_LIKE(text, '\sobl(\s|$)', 'i');
+
+
+SELECT line, text FROM dba_source
+WHERE owner = 'ANALYTICS' AND name = 'ETL_API_PKG'
+AND type = 'PACKAGE BODY'
+AND line BETWEEN 1360 AND 1421
+ORDER BY line;
