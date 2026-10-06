@@ -4,3 +4,9 @@ where privilege in ('CREATE TABLE','CREATE ANY TABLE')
   and grantee in (select granted_role
                   from dba_role_privs
                   where grantee = 'INTG_MERG');
+
+
+
+select round(elapsed_time/1e6) as secs, last_active_time
+from v$sql
+where upper(sql_text) like 'CREATE TABLE INTG_MERG.BACKUP_LOAN%';
