@@ -1,0 +1,50 @@
+select owner, table_name
+from dba_tables
+where owner = 'INTG_MERG'
+  and table_name = 'BACKUP_LOAN_20261006';
+
+select count(*)
+from intg.loan
+where nvl(current_loan_status,'G') like 'G%'
+   or payment_due_date >= date '2025-01-01'
+   or created_date     >= date '2025-01-01'
+   or modified_date    >= date '2025-01-01';
+
+
+select segment_name, round(bytes/1024/1024) as mb
+from dba_segments
+where owner = 'INTG_MERG'
+  and segment_name = 'BACKUP_LOAN_20260806';
+
+select count(*) from intg_merg.backup_loan_20260806;
+
+-- Which tablespace the table will land in
+select default_tablespace
+from dba_users where username = 'INTG_MERG';
+
+-- Free space (replace TS_NAME)
+select round(sum(bytes)/1024/1024) as free_mb
+from dba_free_space where tablespace_name = 'TS_NAME';
+
+-- Can the datafiles grow?
+select file_name, round(bytes/1024/1024) mb,
+       autoextensible, round(maxbytes/1024/1024) max_mb
+from dba_data_files where tablespace_name = 'TS_NAME';
+
+-- Schema quota (-1 in max_bytes means unlimited)
+select tablespace_name, bytes, max_bytes
+from dba_ts_quotas where username = 'INTG_MERG';
+
+-- Can it create tables?
+select privilege from dba_sys_privs
+where grantee = 'INTG_MERG'
+  and privilege in ('CREATE TABLE','CREATE ANY TABLE');
+
+-- Can it read intg.loan?
+select grantee, privilege from dba_tab_privs
+where owner = 'INTG' and table_name = 'LOAN'
+  and grantee = 'INTG_MERG';
+
+-- Does the role for the grant exist?
+select role from dba_roles
+where role = 'VALERI_READ_ONLY_ROLE';
