@@ -1,0 +1,6 @@
+select grantee as role, privilege
+from dba_sys_privs
+where privilege in ('CREATE TABLE','CREATE ANY TABLE')
+  and grantee in (select granted_role
+                  from dba_role_privs
+                  where grantee = 'INTG_MERG');
