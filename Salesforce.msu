@@ -1,0 +1,18 @@
+SELECT event_status_id, COUNT(*)
+FROM intg.events
+WHERE event_type_id = 1
+  AND event_source LIKE 'S%'
+  AND created_date >= TRUNC(SYSDATE)
+GROUP BY event_status_id
+ORDER BY 1;
+
+--confirm
+SELECT COUNT(*) FROM intg_merg.backup_loan_20261006;
+
+SELECT COUNT(*), COUNT(DISTINCT loan_number)
+FROM intg_merg.tmp_loans_to_fix_20261007;
+
+SELECT COUNT(DISTINCT t.loan_number)
+FROM intg_merg.tmp_loans_to_fix_20261007 t
+JOIN intg.loan l ON l.loan_number = t.loan_number
+WHERE l.current_loan_status = 'GuarantyIssued';
