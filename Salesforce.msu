@@ -22,3 +22,16 @@ WHERE l.current_loan_status = 'GuarantyIssued';
 ###
 SELECT owner, table_name FROM all_tables
 WHERE owner = 'INTG' AND table_name LIKE '%STATUS%';
+
+
+--list of loan.
+SELECT t.loan_number,
+       t.payment_due_date         AS current_pdd,
+       t.bkup_pdd                 AS correct_pdd,
+       t.unpaid_principal_balance AS current_upb,
+       t.bkup_upb                 AS correct_upb,
+       l.current_loan_status,
+       t.servicer_file_name
+FROM intg_merg.tmp_loans_to_fix_20261007 t
+JOIN intg.loan l ON l.loan_number = t.loan_number
+ORDER BY t.loan_number;
