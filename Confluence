@@ -1,0 +1,161 @@
+
+  VALERI DB Access
+  Tab of: LGY PL RDS Access Workflow · Working document
+
+  This tab outlines the access workflow for VALERI Oracle, PostgreSQL and Redshift databases.
+  This tab is limited to the VALERI project only. For LGY, LGY Analytics and VHB, see their respective tabs.
+
+  Prerequisites for VALERI DB access
+  
+    Jira related pre-approvals must be in place. All requirements are mandatory, and each must be submitted under its own ticket.
+    ePAS CyberArk (PIV option) plus the ePAS groups/roles. All are mandatory, not either/or.
+      
+        CyberArk - CyberArk User - Production
+        Group - VA\VA PAS Users
+        Group(s)/Role(s) required for access to bastion servers
+          One of these ePAS groups/roles must be assigned to your NMEA account: vaecwins_aws_valeri-rds-gateway-nprod, vaecwins_aws_valeri-rds-gateway-prod
+        
+      
+    
+  
+
+  Jira Pre-Approvals
+
+  ePAS Request (Jira Pre-Approval)
+  Step 1: Create Jira ticket (Access Ticket)
+  Note: This request provides approval for the roles needed to access the VALERI RDP Gateway server(s) in Step 2.
+  
+    FieldResponseAdditional Notes
+    SummaryAccess Request - ePas Request VALERI Systems Access - <your name>Access Request - ePas Request VALERI Systems Access - Jane Doe (example)
+    ApplicationePas Requests (LGY, LGYM, VALERI, LGA)Use the drop down to select the application/tool being requested.
+    Description
+      As a <role>, I require the following roles needed to access RDP Gateway servers to support, manage, and monitor VALERI systems.
+      I require this access through MM/DD/YYYY.
+      I am requesting the following roles be added to MyVA Elevated Privileges:
+      
+        SystemRoleNMEA AccountJustification
+        VA Enterprise Cloud<enter role><enter NMEA>As a <role> I need this access to support VALERI applications and servers.
+      
+      My email address is xxxxxx@va.gov
+    
+      List of available roles
+      
+        RoleNotes
+        Group - VA\vaecwins_aws_valeri-rds-gateway-nprodGives access to VALERI RDP in the Lower Tier
+        Group - VA\vaecwins_aws_valeri-rds-gateway-prodGives access to VALERI RDP in the Prod Tier
+      
+    
+    Supervisor/Team Lead for your area<direct supervisor/team lead>Begin typing the name of your direct supervisor, and select when the name appears.NOTE: this MUST be your direct supervisor.
+    Environment List (Multiselect)<leave blank>Leave this field blank but ensure to list databases in Description field
+  
+
+  RDP Gateway Request (Jira Pre-Approval)
+  Step 2: Create Jira ticket (Access Ticket)
+  Note: This request authorizes access to the specified VALERI RDP gateway server(s) used to connect to the designated database(s).
+  
+    FieldResponseAdditional Notes
+    SummaryAccess Request - VALERI RDP Gateway Access - <your name>Access Request - VALERI RDP Gateway Access - Joe Doe (example)
+    ApplicationRDP Gateway for RDS Access (RHEL8)Use the drop down to select the application/tool being requested.
+    Description
+      As a <role> I require access to VALERI RDP gateway server <list servers>
+      I require this access until MM/DD/YYYY.
+      My email address is xxxxxx@va.gov
+      My NMEA account is <provide zero account (NMEA)>
+    
+      List of available gateway servers
+      
+        Lower Tier RDPProd Tier RDP
+        <VALERI lower-tier gateway>.va.gov<VALERI prod gateway>.va.gov
+      
+    
+    Supervisor/Team Lead for your area<direct supervisor/team lead>Begin typing the name of your direct supervisor, and select when the name appears.NOTE: this MUST be your direct supervisor.
+    Environment List (Multiselect)<leave blank>Leave this field blank but ensure to list databases in Description field
+  
+
+  Database Request (Jira Pre-Approval)
+  Step 3: Create Jira ticket (Access Ticket)
+  Note: This authorizes the creation of an account within the specified VALERI database(s).
+  
+    FieldResponseAdditional Notes
+    SummaryAccess Request - VALERI Database Request - <your name>Access Request - VALERI Database Request - Joe Doe (example)
+    ApplicationDatabase Request Process (LGY, VALERI, LGA)Use the drop down to select the application/tool being requested.
+    Description
+      As a <role> I require default role access so that I may <provide business justification or see instructions on the application/tool page>
+      I require access to the following databases <list VALERI databases>
+      I require this access until MM/DD/YYYY.
+      My email address is xxxxxx@va.gov
+      My NMEA account is <provide zero account (NMEA)>
+    
+      List of available databases
+      
+        Lower TierProd Tier
+        <VALERI DEV DB><VALERI PPDT DB>
+        <VALERI INT DB><VALERI PRDT DB>
+        <VALERI SQA DB>
+        <add / remove rows as needed>
+      
+    
+    Supervisor/Team Lead for your area<direct supervisor/team lead>Begin typing the name of your direct supervisor, and select when the name appears.NOTE: this MUST be your direct supervisor.
+    Environment List (Multiselect)<leave blank>Leave this field blank but ensure to list databases in Description field
+  
+
+  ePAS Submission - Mandatory, Baseline Groups/Roles
+  Note: This ePAS document submittal provides group/role approval with OIT. This is not to be confused with Jira related submittals. This is a separate, mandatory approval process.
+  Step 1: Portal: https://epas.r02.med.va.gov/apps/myva/
+  
+    Go to the ePAS portal and select Submit Request. You'll be redirected to the Assignee tab.
+    Assignee Information. Name, email, and domain are usually pre-populated. Fill manually if not.
+      Domain: [DOMAIN/WINDOWSNAME]Employee type: Contractor
+    Expiration of Elevated Privileges. "Date Expires" = your PIV expiration date.
+    Strong Authentication Token. Only one NMEA is required.
+      If you have a NMEA account, enter it including the domain name. Ensure it is PIV+0 at the end (very important)
+      If not, enter a name in the blank field to create one, using: DOMAIN\[WINDOWSNAME]
+    Supervisor/COR.
+      Name: Corona, JoseEmail: Jose.Corona@va.gov
+  
+
+  Step 2: CyberArk + PAS (PIV option)
+  
+    Select Roles tab.
+    In the PURPLE box, select a role under Standard Role
+      Systems Reside In: Infrastructure OperationsScope of Role: CyberArkSub-Role: CyberArk UserApplies to: Production
+    Select "Add Selected Role" button
+    In the PINK box, select a group (Groups that represent a role)
+      Systems Reside In: Infrastructure OperationsClick "Groups to Add" buttonIn search button enter "VA PAS Users" (exactly as shown)Click VA PAS Users linkClick OK (at the bottom)
+    If you require access to any VALERI databases in the Lower Tier, go back to the PINK box, select a group (Groups that represent a role)
+      Systems Reside In: VA Enterprise CloudClick "Groups to Add" buttonIn search button enter "vaecwins_aws_valeri-rds-gateway-nprod" (exactly as shown)Click on vaecwins_aws_valeri-rds-gateway-nprod linkClick OK (at the bottom)
+    If you require access to any VALERI databases in the Prod Tier, go back to the PINK box, select a group (Groups that represent a role)
+      Systems Reside In: VA Enterprise CloudClick "Groups to Add" buttonIn search button enter "vaecwins_aws_valeri-rds-gateway-prod" (exactly as shown)Click on vaecwins_aws_valeri-rds-gateway-prod linkClick OK (at the bottom)
+    Upon reviewing the roles and privileges, note that access requires, at minimum, completion of items 1 and 2, in addition to one of the options in items 3 or 4 depending on the Tier you require access to. You may copy and personalize the justification samples provided below.
+      
+        #Resides InRoleAccountJustification/Details
+        1Infrastructure Operations - CyberArkCyberArk - CyberArk User - ProductionSelect your PIV account (not NMEA account)VA\<enter NMEA> - Access to the VA PAS System PIV/PIV Cert with PAS solution creates MFA into the password vault for accessing privileged accounts used for performing elevated permissions.
+        2Infrastructure OperationsGroup - VA\VA PAS UsersSelect your PIV account (not NMEA account)VA\<enter NMEA> - Access to the VA PAS System PIV/PIV Cert with PAS solution creates MFA into the password vault for accessing privileged accounts used for performing elevated permissions.
+        3VA Enterprise CloudGroup - VA\vaecwins_aws_valeri-rds-gateway-nprodSelect your NMEA accountAs a <enter your role>, I require access to Windows based jump boxes and servers in the VALERI Non-Prod (Lower Tier) Environments for my NMEA account to support my role's daily functions.
+        4VA Enterprise CloudGroup - VA\vaecwins_aws_valeri-rds-gateway-prodSelect your NMEA accountAs a <enter your role>, I require access to Windows based jump boxes and servers in the VALERI Prod Tier Environments for my NMEA account to support my role's daily functions.
+      
+    Click Submit & Submit (top left) to send the document for approval and processing.
+    You may track progress of your ticket by doing the following
+      Please note: The AD team operates under a separate project, and neither the DBA team nor Operations has the ability to approve and/or accelerate its workflow. All requests must follow the established process. Your accounts will be joined to the appropriate AD groups and roles once that process is completed.
+      On left hand panel, click "My Documents"Click on the link of the most recent Document you have createdClick on the Routes tabScroll to the bottom "Notify AD with Group Roles" and click on the WRTxxxx link to track progress.Route End must read "All routing has completed". For more details click on WRTxxxx link
+  
+
+  SNOW Ticket Submission
+  Note: Only submit this AFTER your Jira and ePAS approvals are complete. It hands off to the Ops team for the provisioning phase.
+  This is where your PIV account is actually added to the VALERI RDP Gateway server group(s) and physically updated on the bastion/gateway server(s).
+  
+    Go to Your IT VAEC Request
+    Click on "Submit a Request"
+    Complete Mandatory fields in Requester Information section
+    Service Request Short Description: Access Request to VALERI RDP Gateway Servers - <email address>
+    Service Request Description: enter the following (depending on the tier(s) you previously requested in Jira and ePAS)
+      Per <enter in LOSD> Please add my PIV account to <vaecwins_aws_valeri-rds-gateway-nprod, vaecwins_aws_valeri-rds-gateway-prod>
+      As a <enter your role>, I need access to these VALERI gateway server(s) to fulfil my daily functions.
+      PIV = <enter your PIV>NMEA = <enter your NMEA>
+    Cloud Provider: AWS
+    Cloud Provider: Loan Guaranty
+    GSS Tool/ Service: AWS Platform
+    Environment: All
+    CloudKey ID: 888
+    Click Order Now button
+  
