@@ -1,0 +1,48 @@
+-- 1. Where am I connected?
+SELECT SYS_CONTEXT('USERENV','DB_NAME')  AS db_name,
+       SYS_CONTEXT('USERENV','CON_NAME') AS container
+FROM dual;
+
+-- 2. Does the user exist under a similar name?
+SELECT username, account_status, created, profile
+FROM dba_users
+WHERE UPPER(username) LIKE '%PUTAM%';
+
+-- 3. Which audit trail is RDS writing to?
+--    (DB / DB,EXTENDED = table, OS / XML = files in ADUMP)
+SELECT name, value
+FROM v$parameter
+WHERE name IN ('audit_trail','audit_sys_operations');
+
+-- 4. Unified audit: create/alter/drop of this user
+SELECT event_timestamp, dbusername, os_username, userhost,
+       client_program_name, action_name, return_code,
+       SUBSTR(sql_text, 1, 200) AS sql_text
+FROM unified_audit_trail
+WHERE action_name IN ('CREATE USER','ALTER USER','DROP USER')
+  AND (UPPER(object_name) LIKE '%PUTAM%'
+       OR UPPER(target_user) LIKE '%PUTAM%'
+       OR UPPER(sql_text)    LIKE '%PUTAM%')
+ORDER BY event_timestamp;
+
+-- 5. Traditional audit (used when audit_trail = DB or DB,EXTENDED)
+SELECT timestamp, username, os_username, userhost,
+       action_name, obj_name, returncode
+FROM dba_audit_trail
+WHERE action_name IN ('CREATE USER','ALTER USER','DROP USER')
+  AND UPPER(obj_name) LIKE '%PUTAM%'
+ORDER BY timestamp;
+
+-- 6. Audit files on the RDS instance (used when audit_trail = OS or XML)
+--    RDS keeps these only ~7 days; slow if there are many files.
+SELECT f.filename, f.mtime, SUBSTR(t.text, 1, 300) AS line
+FROM TABLE(rdsadmin.rds_file_util.listdir('ADUMP')) f,
+     TABLE(rdsadmin.rds_file_util.read_text_file('ADUMP', f.filename)) t
+WHERE f.type = 'file'
+  AND f.mtime > SYSDATE - 7
+  AND UPPER(t.text) LIKE '%PUTAM%';
+
+-- 7. Was account management being audited at all?
+SELECT policy_name, enabled_option, success, failure
+FROM audit_unified_enabled_policies
+WHERE policy_name = 'ORA_ACCOUNT_MGMT';
