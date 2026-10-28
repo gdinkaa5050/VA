@@ -114,3 +114,41 @@ Hi Sis, I wasn't able to get the Oracle master password rotated tonight. The app
 SELECT username, machine, program, osuser
 FROM v$session
 WHERE username = 'ADMIN';  -- your master username
+
+
+
+
+
+
+########
+-- Pre-rotation dependency check
+WITH u AS (SELECT 'ADMIN' AS uname FROM dual)
+SELECT 'ACTIVE SESSION' AS check_type,
+       machine || ' | ' || program || ' | ' || osuser AS detail
+FROM v$session, u WHERE username = u.uname
+UNION ALL
+SELECT 'LOGON LAST 30 DAYS',
+       userhost || ' | ' || client_program_name || ' | ' || os_username
+       || ' | count=' || COUNT(*)
+FROM unified_audit_trail, u
+WHERE dbusername = u.uname
+  AND action_name = 'LOGON'
+  AND event_timestamp > SYSDATE - 30
+GROUP BY userhost, client_program_name, os_username
+UNION ALL
+SELECT 'DB LINK',
+       owner || '.' || db_link || ' -> ' || host
+FROM dba_db_links, u WHERE username = u.uname
+UNION ALL
+SELECT 'SCHEDULER JOB',
+       owner || '.' || job_name || ' | ' || state
+FROM dba_scheduler_jobs, u
+WHERE owner = u.uname
+UNION ALL
+SELECT 'LEGACY JOB',
+       job || ' | ' || SUBSTR(what, 1, 80)
+FROM dba_jobs, u WHERE log_user = u.uname
+UNION ALL
+SELECT 'STORED CREDENTIAL',
+       owner || '.' || credential_name
+FROM dba_credentials, u WHERE username = u.uname;
