@@ -312,3 +312,20 @@ ORDER BY actual_start_date DESC FETCH FIRST 1 ROW ONLY;
 
 
 EXEC DBMS_SCHEDULER.RUN_JOB('ANALYTICS.MONTHLY_ETL_EMAIL_JOB', use_current_session => TRUE);
+
+
+--#### when the job run finished 
+SELECT job_name, status, actual_start_date, run_duration,
+       actual_start_date + run_duration AS end_time
+FROM dba_scheduler_job_run_details
+WHERE job_name IN ('DAILY_ETL','DAILY_ETL_EMAIL_JOB')
+AND actual_start_date >= TIMESTAMP '2026-10-28 00:00:00 UTC'
+ORDER BY actual_start_date;
+
+--look daily email look for
+SELECT line, text FROM dba_source
+WHERE owner = 'ANALYTICS' AND name = 'ETL_EMAIL_PKG'
+AND type = 'PACKAGE BODY'
+AND line BETWEEN 1 AND 120
+ORDER BY line;
+
