@@ -1,0 +1,30 @@
+SELECT ROUND(SUM(bytes)/1024/1024/1024,1)    AS size_gb,
+       ROUND(SUM(maxbytes)/1024/1024/1024,1) AS max_gb
+FROM dba_temp_files
+WHERE tablespace_name = 'TEMP';
+
+
+--peak temp
+SELECT MAX(tot)/1024/1024/1024 AS peak_temp_gb
+FROM (
+  SELECT sample_time, SUM(temp_space_allocated) tot
+  FROM dba_hist_active_sess_history
+  WHERE sample_time BETWEEN TIMESTAMP '2026-11-01 14:00:00'
+                        AND TIMESTAMP '2026-11-01 20:30:00'
+  GROUP BY sample_time
+);
+
+
+--top statement
+SELECT sql_id, ROUND(MAX(tot)/1024/1024/1024,1) AS temp_gb
+FROM (
+  SELECT sql_id, sample_time, SUM(temp_space_allocated) tot
+  FROM dba_hist_active_sess_history
+  WHERE sample_time BETWEEN TIMESTAMP '2026-11-01 14:00:00'
+                        AND TIMESTAMP '2026-11-01 20:30:00'
+  GROUP BY sql_id, sample_time
+)
+GROUP BY sql_id
+ORDER BY temp_gb DESC NULLS LAST
+FETCH FIRST 5 ROWS ONLY;
+
