@@ -28,3 +28,30 @@ GROUP BY sql_id
 ORDER BY temp_gb DESC NULLS LAST
 FETCH FIRST 5 ROWS ONLY;
 
+--how temp is configured 
+SELECT file_name, ROUND(bytes/1024/1024/1024,1) AS gb,
+       autoextensible, increment_by
+FROM dba_temp_files WHERE tablespace_name = 'TEMP';
+
+SELECT ROUND(tablespace_size/1024/1024/1024,1) AS total_gb,
+       ROUND(allocated_space/1024/1024/1024,1) AS allocated_gb,
+       ROUND(free_space/1024/1024/1024,1)      AS free_gb
+FROM dba_temp_free_space WHERE tablespace_name = 'TEMP';
+
+--hour analysis 
+SELECT TO_CHAR(sample_time,'YYYY-MM-DD HH24') AS hr,
+       COUNT(*) AS samples,
+       ROUND(MAX(tot)/1024/1024/1024,1) AS peak_temp_gb
+FROM (
+  SELECT ash.sample_time, SUM(ash.temp_space_allocated) tot
+  FROM dba_hist_active_sess_history ash
+  JOIN dba_users u ON u.user_id = ash.user_id
+  WHERE u.username = 'ANALYTICS'
+  AND ash.sample_time >= TIMESTAMP '2026-10-31 18:00:00'
+  AND ash.sample_time <  TIMESTAMP '2026-11-02 06:00:00'
+  GROUP BY ash.sample_time
+)
+GROUP BY TO_CHAR(sample_time,'YYYY-MM-DD HH24')
+ORDER BY 1;
+
+
