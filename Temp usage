@@ -181,3 +181,56 @@ ORDER BY q.sql_id, s.begin_interval_time;
 
 --retention check
 SELECT retention FROM dba_hist_wr_control;
+
+
+--###solution
+-- Raise retention to 45 days
+EXEC DBMS_WORKLOAD_REPOSITORY.MODIFY_SNAPSHOT_SETTINGS(retention => 64800);
+
+-- Find the snapshot IDs covering the Nov 1 run
+SELECT snap_id, begin_interval_time FROM dba_hist_snapshot
+WHERE begin_interval_time BETWEEN TIMESTAMP '2026-11-01 13:00:00'
+                              AND TIMESTAMP '2026-11-01 21:30:00'
+ORDER BY snap_id;
+
+-- Keep those snapshots permanently as a baseline (use the first and last snap_id)
+EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_BASELINE(start_snap_id => <first>, end_snap_id => <last>, baseline_name => 'MONTHLY_ETL_NOV2026');
+
+--look at the plan
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_AWR('1f5cbmms15k15', 1798681732));
+
+--find the tables it reads
+SELECT name, line, text FROM dba_source
+WHERE owner = 'ANALYTICS'
+AND UPPER(text) LIKE '%LOAN_LAST_KNOWN_SEVR_GTT%';
+
+--check stats
+SELECT owner, table_name, num_rows, last_analyzed, stale_stats
+FROM dba_tab_statistics
+WHERE table_name IN ('<table1>','<table2>')
+ORDER BY last_analyzed;
+
+
+--check size of sysaux
+-- How much space AWR uses now
+SELECT ROUND(space_usage_kbytes/1024/1024,2) AS awr_gb
+FROM v$sysaux_occupants
+WHERE occupant_name = 'SM/AWR';
+
+-- How big SYSAUX is
+SELECT ROUND(SUM(bytes)/1024/1024/1024,1) AS sysaux_gb,
+       ROUND(SUM(maxbytes)/1024/1024/1024,1) AS max_gb
+FROM dba_data_files WHERE tablespace_name = 'SYSAUX';
+
+--confirm ownership
+-- Owner vs creator
+SELECT owner, job_name, job_creator
+FROM dba_scheduler_jobs
+WHERE job_name = 'DAILY_ETL';
+
+-- Which schema the ETL statements run under
+SELECT DISTINCT sql_id, parsing_schema_name
+FROM dba_hist_sqlstat
+WHERE sql_id IN ('1f5cbmms15k15','b2907zzhs8py0','73a1r4j3sgbcn','4snmuygrcysws');
+
+
