@@ -234,3 +234,22 @@ FROM dba_hist_sqlstat
 WHERE sql_id IN ('1f5cbmms15k15','b2907zzhs8py0','73a1r4j3sgbcn','4snmuygrcysws');
 
 
+--Check stats
+SELECT s.owner, s.table_name, s.num_rows, s.last_analyzed, s.stale_stats
+FROM dba_tab_statistics s
+WHERE s.partition_name IS NULL
+AND (s.owner, s.table_name) IN (
+    -- tables read directly
+    SELECT object_owner, object_name
+    FROM dba_hist_sql_plan
+    WHERE sql_id = '1f5cbmms15k15'
+    AND object_type LIKE 'TABLE%'
+    UNION
+    -- tables behind the indexes it used
+    SELECT i.table_owner, i.table_name
+    FROM dba_hist_sql_plan p
+    JOIN dba_indexes i ON i.owner = p.object_owner AND i.index_name = p.object_name
+    WHERE p.sql_id = '1f5cbmms15k15'
+    AND p.object_type LIKE 'INDEX%'
+)
+ORDER BY s.last_analyzed;
