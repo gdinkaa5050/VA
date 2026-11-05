@@ -105,3 +105,32 @@ ORDER BY line;
 
 ---$$$$$
 AND s.begin_interval_time >= TIMESTAMP '2026-09-25 00:00:00'
+
+
+
+
+--which statement took much time Nov1
+SELECT ash.sql_id,
+       ROUND(COUNT(DISTINCT ash.sample_time)*10/60) AS approx_min,
+       COUNT(*) AS samples
+FROM dba_hist_active_sess_history ash
+JOIN dba_users u ON u.user_id = ash.user_id
+WHERE u.username = 'ANALYTICS'
+AND ash.sample_time BETWEEN TIMESTAMP '2026-11-01 14:00:00'
+                        AND TIMESTAMP '2026-11-01 20:30:00'
+GROUP BY ash.sql_id
+ORDER BY approx_min DESC
+FETCH FIRST 10 ROWS ONLY;
+
+--what is the slowest statement 
+SELECT NVL(event, 'ON CPU') AS event, COUNT(*) AS samples
+FROM dba_hist_active_sess_history
+WHERE sql_id = '<sql_id>'
+AND sample_time BETWEEN TIMESTAMP '2026-11-01 14:00:00'
+                    AND TIMESTAMP '2026-11-01 20:30:00'
+GROUP BY event
+ORDER BY samples DESC
+FETCH FIRST 10 ROWS ONLY;
+
+--compare
+SELECT retention FROM dba_hist_wr_control;
