@@ -54,4 +54,30 @@ FROM (
 GROUP BY TO_CHAR(sample_time,'YYYY-MM-DD HH24')
 ORDER BY 1;
 
+--awr
+SELECT snap_id, begin_interval_time, end_interval_time
+FROM dba_hist_snapshot
+WHERE begin_interval_time >= TIMESTAMP '2026-10-31 00:00:00'
+AND   begin_interval_time <  TIMESTAMP '2026-11-03 00:00:00'
+ORDER BY snap_id;
 
+--when did temp grow
+SELECT s.begin_interval_time,
+       ROUND(u.tablespace_size     * 8192/1024/1024/1024) AS size_gb,
+       ROUND(u.tablespace_usedsize * 8192/1024/1024/1024) AS used_gb
+FROM dba_hist_tbspc_space_usage u
+JOIN dba_hist_snapshot s ON s.snap_id = u.snap_id AND s.dbid = u.dbid
+JOIN v$tablespace t      ON t.ts# = u.tablespace_id
+WHERE t.name = 'TEMP'
+AND s.begin_interval_time >= TIMESTAMP '2026-10-28 00:00:00'
+ORDER BY s.begin_interval_time;
+
+--active user during etl
+SELECT u.username, COUNT(*) AS samples,
+       ROUND(MAX(ash.temp_space_allocated)/1024/1024/1024,1) AS max_session_temp_gb
+FROM dba_hist_active_sess_history ash
+LEFT JOIN dba_users u ON u.user_id = ash.user_id
+WHERE ash.sample_time >= TIMESTAMP '2026-11-01 13:00:00'
+AND   ash.sample_time <  TIMESTAMP '2026-11-01 22:00:00'
+GROUP BY u.username
+ORDER BY samples DESC;
