@@ -1,0 +1,43 @@
+--check current state
+SELECT username, account_status, profile,
+       lock_date, expiry_date, last_login
+FROM dba_users
+WHERE username LIKE 'OITLONESTIGM%' OR username = 'LGYSYS';
+
+--why it locked
+SELECT event_timestamp, dbusername, return_code,
+       os_username, userhost, terminal, client_program_name
+FROM unified_audit_trail
+WHERE action_name = 'LOGON'
+  AND (dbusername LIKE 'OITLONESTIGM%' OR dbusername = 'LGYSYS')
+  AND event_timestamp > SYSTIMESTAMP - INTERVAL '7' DAY
+ORDER BY event_timestamp;
+
+--check profile limit
+SELECT resource_name, limit FROM dba_profiles
+WHERE profile = (SELECT profile FROM dba_users WHERE username LIKE 'OITLONESTIGM%')
+  AND resource_name IN ('FAILED_LOGIN_ATTEMPTS','PASSWORD_LOCK_TIME',
+                        'INACTIVE_ACCOUNT_TIME','PASSWORD_LIFE_TIME');
+
+--
+SELECT TO_CHAR(event_timestamp, 'MM-DD HH24:MI:SS') AS at_time, dbusername,
+       action_name, object_name, userhost, return_code,
+       SUBSTR(REGEXP_REPLACE(sql_text, '(IDENTIFIED BY)\s+\S+', '\1 ****', 1, 0, 'i'), 1, 200) AS sql_text
+FROM unified_audit_trail
+WHERE event_timestamp > SYSTIMESTAMP - INTERVAL '1' DAY
+  AND action_name IN ('CREATE USER', 'ALTER USER', 'DROP USER', 'CREATE ROLE', 'DROP ROLE',
+                      'ALTER ROLE', 'GRANT', 'REVOKE', 'CREATE PROFILE', 'ALTER PROFILE',
+                      'DROP PROFILE', 'ALTER SYSTEM', 'CREATE DATABASE LINK',
+                      'DROP DATABASE LINK', 'CREATE DIRECTORY', 'AUDIT', 'NOAUDIT',
+                      'CREATE AUDIT POLICY', 'ALTER AUDIT POLICY', 'DROP AUDIT POLICY')
+ORDER BY event_timestamp;
+
+SELECT TO_CHAR(event_timestamp, 'MM-DD HH24:MI:SS') AS at_time, dbusername,
+       action_name, object_name, userhost,
+       SUBSTR(REGEXP_REPLACE(sql_text, '(IDENTIFIED BY)\s+\S+', '\1 ****', 1, 0, 'i'), 1, 200) AS sql_text
+FROM unified_audit_trail
+WHERE event_timestamp > SYSTIMESTAMP - INTERVAL '7' DAY
+  AND action_name IN ('ALTER USER', 'ALTER PROFILE')
+  AND object_name LIKE 'OITLONESTIGM%'
+ORDER BY event_timestamp;
+
