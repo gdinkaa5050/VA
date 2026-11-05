@@ -253,3 +253,34 @@ AND (s.owner, s.table_name) IN (
     AND p.object_type LIKE 'INDEX%'
 )
 ORDER BY s.last_analyzed;
+
+
+
+--before gather stats check
+-- 1. Is it partitioned? Are its stats locked?
+SELECT t.partitioned, s.stattype_locked, s.global_stats
+FROM dba_tables t
+JOIN dba_tab_statistics s ON s.owner = t.owner AND s.table_name = t.table_name
+WHERE t.owner = 'ANALYTICS' AND t.table_name = 'LOAN_SNAPSHOTS'
+AND s.partition_name IS NULL;
+
+-- 2. Is automatic stats gathering turned on?
+SELECT client_name, status FROM dba_autotask_client
+WHERE client_name = 'auto optimizer stats collection';
+
+-- 3. How much has changed since March?
+EXEC DBMS_STATS.FLUSH_DATABASE_MONITORING_INFO;
+SELECT inserts, updates, deletes, timestamp
+FROM dba_tab_modifications
+WHERE table_owner = 'ANALYTICS' AND table_name = 'LOAN_SNAPSHOTS'
+AND partition_name IS NULL;
+
+
+-- create a ticket first
+EXEC DBMS_STATS.GATHER_TABLE_STATS(
+  ownname          => 'ANALYTICS',
+  tabname          => 'LOAN_SNAPSHOTS',
+  estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE,
+  degree           => 8,
+  cascade          => TRUE,
+  no_invalidate    => FALSE);
