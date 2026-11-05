@@ -276,6 +276,37 @@ WHERE table_owner = 'ANALYTICS' AND table_name = 'LOAN_SNAPSHOTS'
 AND partition_name IS NULL;
 
 
+--check partition stats
+-- Stats on the newest partitions
+SELECT partition_name, num_rows, last_analyzed, stale_stats
+FROM dba_tab_statistics
+WHERE owner = 'ANALYTICS' AND table_name = 'LOAN_SNAPSHOTS'
+AND partition_name IS NOT NULL
+ORDER BY partition_position DESC
+FETCH FIRST 6 ROWS ONLY;
+
+-- Current stats preferences for this table
+SELECT DBMS_STATS.GET_PREFS('INCREMENTAL','ANALYTICS','LOAN_SNAPSHOTS')   AS incremental,
+       DBMS_STATS.GET_PREFS('STALE_PERCENT','ANALYTICS','LOAN_SNAPSHOTS') AS stale_pct
+FROM dual;
+
+
+--#######
+Recommended fix, in one ticket:
+Let the auto job refresh this table more often:
+BEGIN
+  DBMS_STATS.SET_TABLE_PREFS('ANALYTICS','LOAN_SNAPSHOTS','STALE_PERCENT','1');
+END;
+/
+
+--turn on incremental stats
+BEGIN
+  DBMS_STATS.SET_TABLE_PREFS('ANALYTICS','LOAN_SNAPSHOTS','INCREMENTAL','TRUE');
+END;
+/
+
+
+
 -- create a ticket first
 EXEC DBMS_STATS.GATHER_TABLE_STATS(
   ownname          => 'ANALYTICS',
