@@ -122,6 +122,22 @@ GROUP BY ash.sql_id
 ORDER BY approx_min DESC
 FETCH FIRST 10 ROWS ONLY;
 
+
+--next
+SELECT ash.sql_id,
+       u.username,
+       ROUND(COUNT(DISTINCT ash.sample_time)*10/60) AS approx_min,
+       COUNT(*) AS samples
+FROM dba_hist_active_sess_history ash
+LEFT JOIN dba_users u ON u.user_id = ash.user_id
+WHERE ash.sample_time BETWEEN TIMESTAMP '2026-11-01 14:00:00'
+                          AND TIMESTAMP '2026-11-01 20:30:00'
+AND ash.sql_id IS NOT NULL
+GROUP BY ash.sql_id, u.username
+ORDER BY approx_min DESC
+FETCH FIRST 10 ROWS ONLY;
+
+
 --what is the slowest statement 
 SELECT NVL(event, 'ON CPU') AS event, COUNT(*) AS samples
 FROM dba_hist_active_sess_history
