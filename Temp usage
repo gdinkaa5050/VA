@@ -291,6 +291,12 @@ SELECT DBMS_STATS.GET_PREFS('INCREMENTAL','ANALYTICS','LOAN_SNAPSHOTS')   AS inc
 FROM dual;
 
 
+--check what is gathering the partition stats
+SELECT owner, name, line, text FROM dba_source
+WHERE owner = 'ANALYTICS'
+AND UPPER(text) LIKE '%GATHER%STATS%'
+ORDER BY name, line;
+
 --#######
 Recommended fix, in one ticket:
 Let the auto job refresh this table more often:
