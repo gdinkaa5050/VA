@@ -150,3 +150,34 @@ FETCH FIRST 10 ROWS ONLY;
 
 --compare
 SELECT retention FROM dba_hist_wr_control;
+
+
+--troubleshooting 
+SELECT DBMS_LOB.SUBSTR(sql_text, 2000, 1)
+FROM dba_hist_sqltext WHERE sql_id = '1f5cbmms15k15';
+
+--what were the top 3 wait on
+SELECT sql_id, NVL(event,'ON CPU') AS event, COUNT(*) AS samples
+FROM dba_hist_active_sess_history
+WHERE sql_id IN ('1f5cbmms15k15','b2907zzhs8py0','73a1r4j3sgbcn')
+AND sample_time BETWEEN TIMESTAMP '2026-11-01 14:00:00'
+                    AND TIMESTAMP '2026-11-01 20:30:00'
+GROUP BY sql_id, event
+ORDER BY sql_id, samples DESC;
+
+
+--did the plan change
+SELECT q.sql_id, s.begin_interval_time, q.plan_hash_value,
+       q.executions_delta AS execs,
+       ROUND(q.elapsed_time_delta/1e6/60,1) AS elapsed_min,
+       q.rows_processed_delta AS rows_processed
+FROM dba_hist_sqlstat q
+JOIN dba_hist_snapshot s
+  ON s.snap_id = q.snap_id AND s.dbid = q.dbid
+ AND s.instance_number = q.instance_number
+WHERE q.sql_id IN ('1f5cbmms15k15','b2907zzhs8py0','73a1r4j3sgbcn','4snmuygrcysws')
+ORDER BY q.sql_id, s.begin_interval_time;
+
+
+--retention check
+SELECT retention FROM dba_hist_wr_control;
