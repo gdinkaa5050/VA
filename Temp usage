@@ -81,3 +81,27 @@ WHERE ash.sample_time >= TIMESTAMP '2026-11-01 13:00:00'
 AND   ash.sample_time <  TIMESTAMP '2026-11-01 22:00:00'
 GROUP BY u.username
 ORDER BY samples DESC;
+
+
+
+--####№######
+SELECT TRUNC(ash.sample_time,'HH24') AS hr, COUNT(*) AS samples
+FROM dba_hist_active_sess_history ash
+JOIN dba_users u ON u.user_id = ash.user_id
+WHERE u.username = 'ANALYTICS'
+AND ash.sample_time >= TIMESTAMP '2026-10-28 00:00:00'
+GROUP BY TRUNC(ash.sample_time,'HH24')
+ORDER BY 1;
+
+-----$$$$$
+SELECT line, text FROM dba_source
+WHERE owner = 'ANALYTICS' AND name = 'ETL_API_PKG'
+AND type = 'PACKAGE BODY'
+AND (UPPER(text) LIKE '%SLEEP%'
+  OR UPPER(text) LIKE '%INSERT INTO%LOG%'
+  OR UPPER(text) LIKE '%WAIT%')
+ORDER BY line;
+
+
+---$$$$$
+AND s.begin_interval_time >= TIMESTAMP '2026-09-25 00:00:00'
