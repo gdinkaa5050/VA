@@ -1,0 +1,253 @@
+-- =============================================================================
+-- Amazon Redshift: offboard (drop) a user that "owns nothing but still can't be dropped"
+--
+-- WHY IT FAILS
+--   Users are cluster-wide, but ownership, grants and default privileges are stored
+--   separately in EACH database. Removing roles and owned objects is not enough.
+--   DROP USER is also blocked when the user:
+--     a) still HOLDS a privilege on an object, schema, function, database or language
+--     b) GRANTED a privilege to someone else (they show as grantor, "/olduser" in the ACL)
+--     c) has DEFAULT PRIVILEGES defined, either as the owner or as the grantee
+--     d) owns something in ANOTHER database on the same cluster
+--     e) has an RLS or masking policy attached, or owns a datashare
+--   The error tells you which kind: "...owns some object" or
+--   "...has a privilege on some object".
+--
+-- HOW TO USE
+--   1. Run as a superuser.
+--   2. Replace olduser with the account name (all lowercase), and newowner with the
+--      account that should take over ownership.
+--   3. Run sections 2 and 3 while CONNECTED TO EACH DATABASE listed in section 1.
+--   4. Names such as "IAM:jdoe" or "IAMR:..." contain a colon: keep the double quotes.
+-- =============================================================================
+
+
+-- #############################################################################
+-- 1. FIND THE USERS (run once, any database)
+-- #############################################################################
+
+-- 1a. All users, with superuser flag and password expiry
+SELECT usename, usesysid, usesuper, usecreatedb, valuntil
+FROM pg_user
+ORDER BY usename;
+
+-- 1a-2. Triage: users sorted into offboarding buckets
+--       valuntil is type abstime, which Redshift can't cast to text or timestamp, so it
+--       is compared with abstime literals. EDIT THE TWO DATES: today, and today + 60 days.
+SELECT usename, usesysid, usesuper, valuntil,
+       CASE
+         WHEN usesysid = 1 OR usename IN ('rdsdb', 'awsuser') OR usename LIKE 'IAM%:%'
+              THEN '0 - AWS internal / admin / IAM: leave alone'
+         WHEN usename SIMILAR TO '%(service|svc|powerbi|qlik|glue|internal|rsdb)%'
+              THEN '1 - service account: confirm with app owner'
+         WHEN valuntil IS NULL
+              THEN '5 - never expires: review'
+         WHEN valuntil < '1931-01-01'::abstime
+              THEN '2 - already disabled (1930 date): drop'
+         WHEN valuntil < '2026-11-06'::abstime          -- today
+              THEN '3 - password expired: likely offboard'
+         WHEN valuntil < '2027-01-05'::abstime          -- today + 60 days
+              THEN '4 - expires within 60 days'
+         ELSE '6 - active'
+       END AS bucket
+FROM pg_user
+ORDER BY bucket, usesuper DESC, valuntil, usename;
+
+-- 1b. Last successful login (STL logs keep only a few days; for longer, use the
+--     audit connection log in S3 or CloudWatch)
+SELECT username, MAX(recordtime) AS last_login
+FROM stl_connection_log
+WHERE event = 'authenticated'
+GROUP BY username
+ORDER BY last_login;
+
+-- 1c. Last query run by each user (SYS_ views keep about 7 days)
+SELECT u.usename, MAX(q.start_time) AS last_query
+FROM pg_user u
+LEFT JOIN sys_query_history q ON q.user_id = u.usesysid
+GROUP BY u.usename
+ORDER BY last_query NULLS FIRST;
+
+-- 1d. Every database on the cluster. Sections 2 and 3 must be run in each one.
+SELECT datname FROM pg_database
+WHERE datname NOT IN ('template0', 'template1', 'padb_harvest')
+ORDER BY datname;
+
+
+-- #############################################################################
+-- 2. FIND WHAT IS BLOCKING THE DROP (run in EACH database)
+-- #############################################################################
+
+-- 2a. Objects OWNED by the user (tables, views, schemas, functions, procedures, databases)
+SELECT 'relation' AS kind, n.nspname || '.' || c.relname AS object_name, c.relkind::text AS detail
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relowner = (SELECT usesysid FROM pg_user WHERE usename = 'olduser')
+UNION ALL
+SELECT 'schema', nspname, ''
+FROM pg_namespace
+WHERE nspowner = (SELECT usesysid FROM pg_user WHERE usename = 'olduser')
+UNION ALL
+SELECT 'function/procedure', n.nspname || '.' || p.proname, ''
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.proowner = (SELECT usesysid FROM pg_user WHERE usename = 'olduser')
+UNION ALL
+SELECT 'database', datname, ''
+FROM pg_database
+WHERE datdba = (SELECT usesysid FROM pg_user WHERE usename = 'olduser');
+
+-- 2b. Privileges the user HOLDS (granted directly to the user)
+SELECT 'table/view' AS kind, namespace_name || '.' || relation_name AS object_name, privilege_type
+FROM svv_relation_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION ALL
+SELECT 'schema', namespace_name, privilege_type
+FROM svv_schema_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION ALL
+SELECT 'function/procedure', namespace_name || '.' || function_name, privilege_type
+FROM svv_function_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION ALL
+SELECT 'database', database_name, privilege_type
+FROM svv_database_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION ALL
+SELECT 'language', language_name, privilege_type
+FROM svv_language_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user';
+
+-- 2c. DEFAULT PRIVILEGES involving the user, as owner or grantee.
+--     This is the most common hidden blocker.
+SELECT schema_name, object_type, owner_name, grantee_name, grantee_type, privilege_type
+FROM svv_default_privileges
+WHERE owner_name = 'olduser' OR grantee_name = 'olduser';
+
+-- 2d. Raw ACL search. This also catches grants the user MADE to others, which the SVV
+--     views above don't show. 'olduser=' means the user holds it; '/olduser' means the
+--     user granted it. Check the hits by eye, since a LIKE can match similar names.
+SELECT 'relation' AS kind, n.nspname || '.' || c.relname AS object_name,
+       array_to_string(c.relacl, ',') AS acl
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE array_to_string(c.relacl, ',') LIKE '%olduser=%'
+   OR array_to_string(c.relacl, ',') LIKE '%/olduser%'
+UNION ALL
+SELECT 'schema', nspname, array_to_string(nspacl, ',')
+FROM pg_namespace
+WHERE array_to_string(nspacl, ',') LIKE '%olduser=%'
+   OR array_to_string(nspacl, ',') LIKE '%/olduser%'
+UNION ALL
+SELECT 'function/procedure', n.nspname || '.' || p.proname, array_to_string(p.proacl, ',')
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE array_to_string(p.proacl, ',') LIKE '%olduser=%'
+   OR array_to_string(p.proacl, ',') LIKE '%/olduser%'
+UNION ALL
+SELECT 'database', datname, array_to_string(datacl, ',')
+FROM pg_database
+WHERE array_to_string(datacl, ',') LIKE '%olduser=%'
+   OR array_to_string(datacl, ',') LIKE '%/olduser%'
+UNION ALL
+SELECT 'default acl', COALESCE(n.nspname, '(all schemas)') || ' / ' || d.defaclobjtype,
+       array_to_string(d.defaclacl, ',')
+FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+WHERE d.defacluser = (SELECT usesysid FROM pg_user WHERE usename = 'olduser')
+   OR array_to_string(d.defaclacl, ',') LIKE '%olduser=%'
+   OR array_to_string(d.defaclacl, ',') LIKE '%/olduser%';
+
+-- 2e. Row-level security and masking policies attached to the user
+SELECT * FROM svv_rls_attached_policy        WHERE grantee = 'olduser';
+SELECT * FROM svv_attached_masking_policy    WHERE grantee = 'olduser';
+
+-- 2f. Datashares owned by the user
+SELECT share_name, share_owner FROM svv_datashares
+WHERE share_owner = (SELECT usesysid FROM pg_user WHERE usename = 'olduser');
+
+
+-- #############################################################################
+-- 3. CLEAN UP (run in EACH database where section 2 returned rows)
+-- #############################################################################
+
+-- 3a. Generate REVOKE statements for privileges the user holds. Review, then run.
+SELECT DISTINCT 'REVOKE ALL ON ' || quote_ident(namespace_name) || '.' || quote_ident(relation_name)
+       || ' FROM ' || quote_ident(identity_name) || ';' AS cmd
+FROM svv_relation_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION
+SELECT DISTINCT 'REVOKE ALL ON SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_schema_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION
+SELECT DISTINCT 'REVOKE ALL ON ALL FUNCTIONS IN SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_function_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION
+SELECT DISTINCT 'REVOKE ALL ON ALL PROCEDURES IN SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_function_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION
+SELECT DISTINCT 'REVOKE ALL ON DATABASE ' || quote_ident(database_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_database_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user'
+UNION
+SELECT DISTINCT 'REVOKE USAGE ON LANGUAGE ' || language_name
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_language_privileges
+WHERE identity_name = 'olduser' AND identity_type = 'user';
+
+-- 3b. Generate the fix for DEFAULT PRIVILEGES. The REVOKE must match how it was
+--     granted: with IN SCHEMA if it was schema-scoped, without it if it was global.
+SELECT 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(owner_name)
+       || CASE WHEN schema_name IS NOT NULL THEN ' IN SCHEMA ' || quote_ident(schema_name) ELSE '' END
+       || ' REVOKE ALL ON ' || CASE object_type WHEN 'RELATION' THEN 'TABLES'
+                                                WHEN 'FUNCTION' THEN 'FUNCTIONS'
+                                                WHEN 'PROCEDURE' THEN 'PROCEDURES'
+                                                ELSE object_type END
+       || ' FROM ' || CASE WHEN grantee_type = 'group' THEN 'GROUP ' ELSE '' END
+       || quote_ident(grantee_name) || ';' AS cmd
+FROM svv_default_privileges
+WHERE owner_name = 'olduser' OR grantee_name = 'olduser';
+
+-- 3c. Grants the user MADE to others (found by '/olduser' in 2d). A superuser REVOKE
+--     acts as the object owner and does not remove these, so revoke as the user.
+--     Re-grant from the owner afterwards if the grantee still needs the access.
+SET SESSION AUTHORIZATION 'olduser';
+REVOKE ALL ON myschema.mytable FROM some_grantee;      -- one line per hit from 2d
+RESET SESSION AUTHORIZATION;
+-- GRANT SELECT ON myschema.mytable TO some_grantee;   -- re-grant as owner if still needed
+
+-- 3d. Transfer anything the user owns (from 2a)
+ALTER TABLE     myschema.mytable           OWNER TO newowner;   -- also used for views
+ALTER SCHEMA    myschema                   OWNER TO newowner;
+ALTER PROCEDURE myschema.myproc(int)       OWNER TO newowner;
+ALTER FUNCTION  myschema.myfunc(int)       OWNER TO newowner;
+ALTER DATABASE  mydb                       OWNER TO newowner;
+
+-- 3e. Detach policies (from 2e)
+-- DETACH RLS POLICY policy_name ON myschema.mytable FROM olduser;
+-- DETACH MASKING POLICY policy_name ON myschema.mytable (col) FROM olduser;
+
+-- 3f. Re-run section 2 in every database. When nothing comes back, drop the user:
+DROP USER olduser;
+-- (Run DROP USER from any database. If it still fails, the error names the type of
+--  blocker; repeat section 2 in the database you haven't checked.)
+
+
+-- #############################################################################
+-- 4. NEUTRALISE THE ACCOUNT NOW, while cleanup is in progress (for the scan)
+-- #############################################################################
+
+ALTER USER olduser PASSWORD DISABLE;              -- no password logins
+ALTER USER olduser CONNECTION LIMIT 0;            -- no new sessions
+ALTER USER olduser VALID UNTIL '2000-01-01';      -- password expired
+
+-- End any open sessions
+SELECT pg_terminate_backend(process)
+FROM stv_sessions
+WHERE user_name = 'olduser';
+
+-- NOTE: IAM-based logins (GetClusterCredentials with AutoCreate, "IAM:" / "IAMR:" users)
+-- can recreate the user on the next login. Remove the person's IAM permission or IdP group
+-- mapping too, or the user will come back after you drop it.
