@@ -79,3 +79,20 @@ FROM dba_profiles p
 JOIN dba_profiles d ON d.profile = 'DEFAULT' AND d.resource_name = 'IDLE_TIME'
 WHERE p.resource_name = 'IDLE_TIME'
 ORDER BY p.profile;
+
+
+
+
+
+
+CASE
+  WHEN p.profile = 'RDSADMIN' THEN 'N/A - AWS managed'
+  WHEN (SELECT COUNT(*) FROM dba_users u WHERE u.profile = p.profile
+          AND u.account_status LIKE 'OPEN%' AND u.oracle_maintained = 'N') = 0
+       THEN 'N/A - no users'
+  WHEN p.profile = 'VALERI' THEN 'By design - service accounts'
+  WHEN (CASE WHEN p.limit = 'DEFAULT' THEN d.limit ELSE p.limit END) = 'UNLIMITED'
+    OR TO_NUMBER(CASE WHEN p.limit = 'DEFAULT' THEN d.limit ELSE p.limit END) > 15
+       THEN 'ATTENTION'
+  ELSE 'OK'
+END AS status_vs_15min
