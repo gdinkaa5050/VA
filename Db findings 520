@@ -61,3 +61,21 @@ ORDER BY CASE WHEN pv.failed_logins = 'UNLIMITED' OR TO_NUMBER(pv.failed_logins)
 -- ALTER PROFILE app_service_profile LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
 -- ALTER PROFILE "DEFAULT"           LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
 -- Profile changes apply at the next failed-logon cycle; no restart needed.
+
+
+
+##############
+SELECT SYS_CONTEXT('USERENV','DB_NAME') AS db_name,
+       p.profile,
+       CASE WHEN p.limit = 'DEFAULT' THEN d.limit ELSE p.limit END AS idle_minutes,
+       (SELECT COUNT(*) FROM dba_users u
+         WHERE u.profile = p.profile AND u.account_status LIKE 'OPEN%'
+           AND u.oracle_maintained = 'N') AS open_users,
+       (SELECT value FROM v$parameter WHERE name = 'resource_limit') AS enforced,
+       CASE WHEN (CASE WHEN p.limit = 'DEFAULT' THEN d.limit ELSE p.limit END) = 'UNLIMITED'
+              OR TO_NUMBER(CASE WHEN p.limit = 'DEFAULT' THEN d.limit ELSE p.limit END) > 15
+            THEN 'ATTENTION' ELSE 'OK' END AS status_vs_15min
+FROM dba_profiles p
+JOIN dba_profiles d ON d.profile = 'DEFAULT' AND d.resource_name = 'IDLE_TIME'
+WHERE p.resource_name = 'IDLE_TIME'
+ORDER BY p.profile;
