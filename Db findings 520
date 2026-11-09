@@ -1,0 +1,63 @@
+-- =============================================================================
+-- VA AC-7 (Unsuccessful Logon Attempts) check - Oracle on RDS
+-- Run once per database (connect as master user / DBA). Read-only.
+--
+-- AC-7 minimums being tested:
+--   a. max 3 invalid password attempts            -> FAILED_LOGIN_ATTEMPTS <= 3
+--   b. lock at least 15 minutes, or until an admin -> PASSWORD_LOCK_TIME >= 15 min
+--      releases it                                    or UNLIMITED
+-- PASSWORD_LOCK_TIME is in DAYS: 1/24 = 60 min, 1/96 = 15 min, 1/1440 = 1 min.
+-- A profile showing DEFAULT inherits from the DEFAULT profile; this resolves it.
+-- =============================================================================
+
+-- [1] Every profile in use, with effective values and pass/fail
+WITH p AS (
+  SELECT profile, resource_name, limit
+  FROM dba_profiles
+  WHERE resource_name IN ('FAILED_LOGIN_ATTEMPTS', 'PASSWORD_LOCK_TIME')
+),
+eff AS (
+  SELECT p.profile, p.resource_name,
+         CASE WHEN p.limit = 'DEFAULT' THEN d.limit ELSE p.limit END AS val
+  FROM p
+  JOIN p d ON d.profile = 'DEFAULT' AND d.resource_name = p.resource_name
+),
+pv AS (
+  SELECT profile,
+         MAX(CASE WHEN resource_name = 'FAILED_LOGIN_ATTEMPTS' THEN val END) AS failed_logins,
+         MAX(CASE WHEN resource_name = 'PASSWORD_LOCK_TIME'    THEN val END) AS lock_time_days
+  FROM eff
+  GROUP BY profile
+),
+users_on AS (
+  SELECT profile, COUNT(*) AS open_users, LISTAGG(username, ', ') WITHIN GROUP (ORDER BY username) AS usernames
+  FROM dba_users
+  WHERE oracle_maintained = 'N'
+    AND username NOT IN ('RDSADMIN', 'RDSSEC', 'RDS_DATAGUARD')
+    AND account_status LIKE 'OPEN%'
+    AND authentication_type = 'PASSWORD'
+  GROUP BY profile
+)
+SELECT SYS_CONTEXT('USERENV', 'DB_NAME')  AS db_name,
+       pv.profile,
+       u.open_users,
+       pv.failed_logins,
+       pv.lock_time_days,
+       CASE WHEN pv.lock_time_days = 'UNLIMITED' THEN 'until admin unlock'
+            ELSE TO_CHAR(ROUND(TO_NUMBER(pv.lock_time_days) * 1440)) END AS lock_minutes,
+       CASE WHEN pv.failed_logins = 'UNLIMITED' OR TO_NUMBER(pv.failed_logins) > 3
+            THEN 'FAIL (>3)' ELSE 'OK' END AS ac7a_attempts,
+       CASE WHEN pv.lock_time_days = 'UNLIMITED' THEN 'OK'
+            WHEN ROUND(TO_NUMBER(pv.lock_time_days) * 1440) < 15 THEN 'FAIL (<15 min)'
+            ELSE 'OK' END AS ac7b_lock_time,
+       SUBSTR(u.usernames, 1, 300) AS usernames
+FROM pv
+JOIN users_on u ON u.profile = pv.profile          -- only profiles that open users are on
+ORDER BY CASE WHEN pv.failed_logins = 'UNLIMITED' OR TO_NUMBER(pv.failed_logins) > 3 THEN 0 ELSE 1 END,
+         pv.profile;
+
+-- [2] Fix statements (review before running). 15 min = 1/96 day.
+-- ALTER PROFILE human_user_profile  LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
+-- ALTER PROFILE app_service_profile LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
+-- ALTER PROFILE "DEFAULT"           LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
+-- Profile changes apply at the next failed-logon cycle; no restart needed.
