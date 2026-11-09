@@ -1,0 +1,18 @@
+-- 1. Which code uses network packages
+SELECT owner, name, type, referenced_name
+FROM dba_dependencies
+WHERE referenced_name IN ('UTL_HTTP','UTL_TCP','UTL_SMTP','UTL_MAIL','HTTPURITYPE','DBMS_LDAP')
+  AND owner IN ('LGYSYS','AUDSEC')
+ORDER BY owner, name;
+
+-- 2. Hard-coded URLs / hosts in that code
+SELECT owner, name, type, line, TRIM(text) AS text
+FROM dba_source
+WHERE owner IN ('LGYSYS','AUDSEC')
+  AND REGEXP_LIKE(text, 'https?://|\.gov|\.com|set_wallet|smtp', 'i')
+ORDER BY owner, name, line;
+
+-- 3. Jobs that might trigger those calls
+SELECT owner, job_name, enabled, repeat_interval, job_action
+FROM dba_scheduler_jobs
+WHERE owner IN ('LGYSYS','AUDSEC');
