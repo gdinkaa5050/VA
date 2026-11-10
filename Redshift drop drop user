@@ -251,3 +251,38 @@ WHERE user_name = 'olduser';
 -- NOTE: IAM-based logins (GetClusterCredentials with AutoCreate, "IAM:" / "IAMR:" users)
 -- can recreate the user on the next login. Remove the person's IAM permission or IdP group
 -- mapping too, or the user will come back after you drop it.
+
+
+
+###############
+SELECT usename AS username, usesysid AS userid, usesuper, valuntil AS password_expires_at
+FROM pg_user
+WHERE usesysid IN (
+  120, 197, 194, 102, 109, 140, 170, 128, 161, 155,
+  175, 178, 118, 107, 115, 111, 183, 135, 134, 148,
+  200, 196, 205, 147, 141, 195, 108, 142, 180, 186,
+  132, 106, 154, 203, 169
+)
+ORDER BY usename;
+
+
+SELECT 'DROP USER IF EXISTS ' || quote_ident(usename) || ';' AS cmd
+FROM pg_user
+WHERE usesysid IN (
+  120, 197, 194, 102, 109, 140, 170, 128, 161, 155,
+  175, 178, 118, 107, 115, 111, 183, 135, 134, 148,
+  200, 196, 205, 147, 141, 195, 108, 142, 180, 186,
+  132, 106, 154, 203, 169
+)
+ORDER BY usename;
+
+
+SELECT usename, usesysid, usesuper
+FROM pg_user
+WHERE usesysid IN (
+  120, 197, 194, 102, 109, 140, 170, 128, 161, 155,
+  175, 178, 118, 107, 115, 111, 183, 135, 134, 148,
+  200, 196, 205, 147, 141, 195, 108, 142, 180, 186,
+  132, 106, 154, 203, 169
+)
+  AND usesuper = true;
