@@ -96,3 +96,38 @@ CASE
        THEN 'ATTENTION'
   ELSE 'OK'
 END AS status_vs_15min
+
+
+
+--########
+1. Before the change: check for failed logins
+Lowering the limit to 3 can lock a service account if an app is using an old password. Check the last 7 days first:
+
+SELECT dbusername, userhost, COUNT(*) AS failed, MAX(event_timestamp) AS last_failure
+FROM unified_audit_trail
+WHERE action_name = 'LOGON' AND return_code <> 0
+  AND event_timestamp > SYSTIMESTAMP - INTERVAL '7' DAY
+  AND dbusername IN (SELECT username FROM dba_users WHERE profile IN ('VALERI','ADMIN_PRFL'))
+GROUP BY dbusername, userhost
+ORDER BY failed DESC;
+
+--2. The fix (after change approval)
+VALERI (service accounts): only the attempt count is wrong. The 60-day lock already meets AC-7.
+ALTER PROFILE VALERI LIMIT FAILED_LOGIN_ATTEMPTS 3;
+
+--ADMIN_PRFL (master): pick one.
+Comply, and the RA is no longer needed (1/96 = 15 minutes):
+
+ALTER PROFILE ADMIN_PRFL LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
+
+--To undo the change entirely:
+ALTER PROFILE VALERI     LIMIT FAILED_LOGIN_ATTEMPTS 5;
+ALTER PROFILE ADMIN_PRFL LIMIT FAILED_LOGIN_ATTEMPTS 5 PASSWORD_LOCK_TIME .0006;
+
+--A risk to raise with the team
+With a 60-day lock, one app server with a wrong password locks that service account until someone unlocks it, which is an outage. If you'd rather it recover on its own, this is also compliant:
+
+--The trade-off: a 15-minute auto-unlock gets you back sooner but also gives an attacker another try every 15 minutes. Lock until admin unlocks is stronger but more disruptive. Both meet AC-7, so it's a team decision.
+ALTER PROFILE VALERI LIMIT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1/96;
+
+
