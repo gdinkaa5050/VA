@@ -286,3 +286,45 @@ WHERE usesysid IN (
   132, 106, 154, 203, 169
 )
   AND usesuper = true;
+
+
+
+№#########
+
+-- ============================================================
+-- Replace <old_user>, <new_owner>, <schema>, <grantee>
+-- Run this in EVERY database on the cluster
+-- ============================================================
+
+-- 1. Find the username and schema
+SELECT usename FROM pg_user WHERE usesysid = 169;
+SELECT nspname FROM pg_namespace WHERE oid = 4554357;
+
+-- 2. Generate ALTER statements for tables and views (copy the output and run it)
+SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+       || ' OWNER TO <new_owner>;'
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relowner = 169
+  AND c.relkind IN ('r','v');
+
+-- 3. Generate ALTER statements for functions (copy the output and run it)
+SELECT 'ALTER FUNCTION ' || quote_ident(n.nspname) || '.' || p.proname
+       || '(' || oidvectortypes(p.proargtypes) || ') OWNER TO <new_owner>;'
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.proowner = 169;
+
+-- 4. Check for schemas owned by the user and default privileges
+SELECT nspname FROM pg_namespace WHERE nspowner = 169;
+SELECT * FROM pg_default_acl WHERE defacluser = 169;
+
+-- 5. Fix whatever step 4 returned
+ALTER SCHEMA <schema> OWNER TO <new_owner>;
+ALTER DEFAULT PRIVILEGES FOR USER <old_user> IN SCHEMA <schema> REVOKE ALL ON TABLES FROM <grantee>;
+ALTER DEFAULT PRIVILEGES FOR USER <old_user> IN SCHEMA <schema> REVOKE ALL ON FUNCTIONS FROM <grantee>;
+REVOKE ALL ON ALL TABLES IN SCHEMA <schema> FROM <old_user>;
+REVOKE ALL ON SCHEMA <schema> FROM <old_user>;
+
+-- 6. Drop the user
+DROP USER <old_user>;
