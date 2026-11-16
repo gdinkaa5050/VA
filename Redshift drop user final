@@ -1,0 +1,198 @@
+-- ============================================================
+-- Redshift bulk user drop: 17 users
+-- New owner for all objects: awsuser
+-- Run every section in EACH database on the cluster.
+--
+-- WARNING: 3 of these are SUPERUSERS: anil_gadde (102),
+-- katie_brewster (111), ramana_challapalli (108).
+-- Confirm they should be dropped, and don't run this logged in as one of them.
+--
+-- User IDs: 194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186
+-- ============================================================
+
+
+-- ------------------------------------------------------------
+-- 0. CONFIRM THE USER LIST (should return 17 rows)
+-- ------------------------------------------------------------
+SELECT usename, usesysid, usesuper
+FROM pg_user
+WHERE usesysid IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+ORDER BY usename;
+
+
+-- ------------------------------------------------------------
+-- 1. WHAT DO THEY OWN?
+-- ------------------------------------------------------------
+SELECT u.usename, 'table/view' AS kind, TRIM(n.nspname) || '.' || TRIM(c.relname) AS name
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE c.relowner IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+  AND c.relkind IN ('r','v')
+UNION ALL
+SELECT u.usename, 'function/procedure', TRIM(n.nspname) || '.' || TRIM(p.proname)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_user u ON u.usesysid = p.proowner
+WHERE p.proowner IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+UNION ALL
+SELECT u.usename, 'schema', TRIM(n.nspname)
+FROM pg_namespace n
+JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE n.nspowner IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+UNION ALL
+SELECT u.usename, 'database', TRIM(d.datname)
+FROM pg_database d
+JOIN pg_user u ON u.usesysid = d.datdba
+WHERE d.datdba IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+UNION ALL
+SELECT u.usename, 'default acl', CAST(a.defaclnamespace AS VARCHAR)
+FROM pg_default_acl a
+JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE a.defacluser IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+ORDER BY 1, 2;
+
+
+-- ------------------------------------------------------------
+-- 2. WHAT PRIVILEGES DO THEY HOLD?
+-- ------------------------------------------------------------
+SELECT * FROM svv_user_grants          WHERE user_id     IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_relation_privileges  WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_column_privileges    WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_function_privileges  WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_schema_privileges    WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_ml_model_privileges  WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_language_privileges  WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_database_privileges  WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_datashare_privileges WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_iam_privileges       WHERE identity_type = 'user' AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+SELECT * FROM svv_default_privileges   WHERE owner_id    IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+                                          OR grantee_id  IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+
+-- ============================================================
+-- 3. GENERATE THE FIX STATEMENTS
+--    Each query below OUTPUTS SQL. Copy the output and run it.
+-- ============================================================
+
+-- 3a. Transfer tables/views to awsuser
+SELECT 'ALTER TABLE ' || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(c.relname))
+       || ' OWNER TO awsuser;'
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relowner IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+  AND c.relkind IN ('r','v');
+
+-- 3b. Transfer functions AND stored procedures (picks the right keyword automatically)
+SELECT 'ALTER ' || CASE WHEN p.prokind = 'p' THEN 'PROCEDURE ' ELSE 'FUNCTION ' END
+       || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(p.proname))
+       || '(' || oidvectortypes(p.proargtypes) || ') OWNER TO awsuser;'
+FROM pg_proc_info p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.proowner IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+-- 3c. Transfer schemas
+SELECT 'ALTER SCHEMA ' || quote_ident(TRIM(nspname)) || ' OWNER TO awsuser;'
+FROM pg_namespace
+WHERE nspowner IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+-- 3d. Revoke schema privileges
+SELECT DISTINCT 'REVOKE ALL ON SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_schema_privileges
+WHERE identity_type = 'user'
+  AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+-- 3e. Revoke table/view privileges
+SELECT DISTINCT 'REVOKE ALL ON ' || quote_ident(namespace_name) || '.' || quote_ident(relation_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_relation_privileges
+WHERE identity_type = 'user'
+  AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+-- 3f. Revoke function privileges
+SELECT DISTINCT 'REVOKE ALL ON FUNCTION ' || quote_ident(namespace_name) || '.' || quote_ident(function_name)
+       || '(' || NVL(argument_types, '') || ') FROM ' || quote_ident(identity_name) || ';'
+FROM svv_function_privileges
+WHERE identity_type = 'user'
+  AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+-- 3g. Revoke database privileges
+SELECT DISTINCT 'REVOKE ALL ON DATABASE ' || quote_ident(database_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_database_privileges
+WHERE identity_type = 'user'
+  AND identity_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+-- 3h. Revoke default privileges (owned BY these users, or granted TO them)
+SELECT DISTINCT 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(owner_name)
+       || CASE WHEN schema_name IS NOT NULL THEN ' IN SCHEMA ' || quote_ident(schema_name) ELSE '' END
+       || ' REVOKE ALL ON '
+       || CASE object_type WHEN 'RELATION'  THEN 'TABLES'
+                           WHEN 'FUNCTION'  THEN 'FUNCTIONS'
+                           WHEN 'PROCEDURE' THEN 'PROCEDURES' END
+       || ' FROM '
+       || CASE grantee_type WHEN 'group' THEN 'GROUP ' WHEN 'role' THEN 'ROLE ' ELSE '' END
+       || quote_ident(grantee_name) || ';'
+FROM svv_default_privileges
+WHERE owner_id   IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186)
+   OR grantee_id IN (194,102,155,178,118,107,115,111,135,134,148,147,141,108,142,180,186);
+
+
+-- ============================================================
+-- 4. ADMIN VIEW VERSION (needs admin.v_generate_user_grant_revoke_ddl
+--    from amazon-redshift-utils). Use this if 3d–3h miss anything.
+-- ============================================================
+
+-- 4a. Re-create grants these users gave to others, with awsuser as grantor
+--     (so others keep their access after the drop)
+SELECT regexp_replace(ddl, grantor, 'awsuser')
+FROM admin.v_generate_user_grant_revoke_ddl
+WHERE grantor IN ('amrin_syed','anil_gadde','ferris_t_samara','jimmy_nguyen','joe_shrewsbury',
+                  'joel_dubbels','kamsaladevi_baskaradoss','katie_brewster','lena_park','lisa_ha',
+                  'mahesh_kc','patrick_watts','prasannan_krishnasharma','ramana_challapalli',
+                  'roger_luce','saira_walia','sankara_sadasivuni')
+  AND ddltype = 'grant'
+  AND objtype <> 'default acl'
+ORDER BY objseq, grantseq;
+
+-- 4b. Revoke everything granted to or by these users
+SELECT ddl
+FROM admin.v_generate_user_grant_revoke_ddl
+WHERE ddltype = 'revoke'
+  AND (grantee IN ('amrin_syed','anil_gadde','ferris_t_samara','jimmy_nguyen','joe_shrewsbury',
+                   'joel_dubbels','kamsaladevi_baskaradoss','katie_brewster','lena_park','lisa_ha',
+                   'mahesh_kc','patrick_watts','prasannan_krishnasharma','ramana_challapalli',
+                   'roger_luce','saira_walia','sankara_sadasivuni')
+    OR grantor IN ('amrin_syed','anil_gadde','ferris_t_samara','jimmy_nguyen','joe_shrewsbury',
+                   'joel_dubbels','kamsaladevi_baskaradoss','katie_brewster','lena_park','lisa_ha',
+                   'mahesh_kc','patrick_watts','prasannan_krishnasharma','ramana_challapalli',
+                   'roger_luce','saira_walia','sankara_sadasivuni'))
+ORDER BY objseq, grantseq DESC;
+
+
+-- ============================================================
+-- 5. RE-CHECK: re-run sections 1 and 2. All should return 0 rows.
+-- ============================================================
+
+
+-- ============================================================
+-- 6. DROP THE USERS
+-- ============================================================
+DROP USER amrin_syed;
+DROP USER anil_gadde;
+DROP USER ferris_t_samara;
+DROP USER jimmy_nguyen;
+DROP USER joe_shrewsbury;
+DROP USER joel_dubbels;
+DROP USER kamsaladevi_baskaradoss;
+DROP USER katie_brewster;
+DROP USER lena_park;
+DROP USER lisa_ha;
+DROP USER mahesh_kc;
+DROP USER patrick_watts;
+DROP USER prasannan_krishnasharma;
+DROP USER ramana_challapalli;
+DROP USER roger_luce;
+DROP USER saira_walia;
+DROP USER sankara_sadasivuni;
