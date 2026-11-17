@@ -300,3 +300,18 @@ WHERE pg_get_userbyid(c.relowner) = 'awsuser'
   AND n.nspname IN ('zlga_dev_dw','sbx_sahsha','lga_dev_tdl_stg')
   AND c.relkind IN ('r','v')
 ORDER BY 1, 2;
+
+
+
+confirm the move
+
+SELECT TRIM(n.nspname) AS schema_name, TRIM(c.relname) AS object_name
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE pg_get_userbyid(c.relowner) = 'glue_dev_service'
+  AND n.nspname IN ('zlga_dev_dw','sbx_sahsha','lga_dev_tdl_stg')
+ORDER BY 1, 2;
+
+SELECT proname, pg_get_userbyid(proowner) AS owner
+FROM pg_proc
+WHERE proname = 'calc_no_of_biz_days';
