@@ -315,3 +315,47 @@ ORDER BY 1, 2;
 SELECT proname, pg_get_userbyid(proowner) AS owner
 FROM pg_proc
 WHERE proname = 'calc_no_of_biz_days';
+
+
+
+
+№###№################
+1. Find out whether this is Dev or UAT. Run this with Limit 100 off:
+SELECT TRIM(n.nspname) AS schema_name,
+       pg_get_userbyid(c.relowner) AS owner,
+       COUNT(*) AS objects
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('public','test_lc')
+  AND c.relkind IN ('r','v')
+GROUP BY 1, 2
+ORDER BY 1, 3 DESC;
+
+
+SELECT 'ALTER TABLE ' || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(c.relname))
+       || ' OWNER TO glue_dev_service;'
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relowner = 142
+  AND c.relkind IN ('r','v');
+
+SELECT 'ALTER ' || CASE WHEN p.prokind = 'p' THEN 'PROCEDURE ' ELSE 'FUNCTION ' END
+       || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(p.proname))
+       || '(' || oidvectortypes(p.proargtypes) || ') OWNER TO glue_dev_service;'
+FROM pg_proc_info p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.proowner = 142;
+
+
+
+2b. If it's UAT or still unclear: don't change any owners. Export this list and send it to Analytics:
+SELECT TRIM(n.nspname) AS schema_name,
+       TRIM(c.relname) AS object_name,
+       CASE c.relkind WHEN 'r' THEN 'table' ELSE 'view' END AS object_type
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relowner = 142
+  AND c.relkind IN ('r','v')
+ORDER BY 1, 2;
+
+
