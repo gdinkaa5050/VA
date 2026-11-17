@@ -368,4 +368,11 @@ ALTER DEFAULT PRIVILEGES FOR USER joel_dubbels GRANT EXECUTE ON PROCEDURES TO PU
 -- Should now return 0 rows
 SELECT * FROM pg_default_acl WHERE defacluser = 107;
 
+
+ALTER DEFAULT PRIVILEGES FOR USER joel_dubbels REVOKE EXECUTE ON PROCEDURES FROM PUBLIC;
+
+-- Should now return 0 rows
+SELECT * FROM pg_default_acl WHERE defacluser = 107;
+
+DROP USER joel_dubbels;
 DROP USER joel_dubbels;
