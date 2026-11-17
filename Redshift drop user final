@@ -278,3 +278,17 @@ JOIN moved m ON m.obj = LOWER(TRIM(n.nspname) || '.' || TRIM(c.relname))
 WHERE pg_get_userbyid(c.relowner) = 'awsuser'
   AND n.nspname IN ('zlga_dev_dw','sbx_sahsha','lga_dev_tdl_stg')
   AND c.relkind IN ('r','v');
+
+
+
+
+SELECT DISTINCT
+  RTRIM(REPLACE(SUBSTRING(text, POSITION('ALTER' IN text)),
+          'OWNER TO awsuser', 'OWNER TO glue_dev_service')) || ';' AS fix_ddl
+FROM stl_ddltext
+WHERE text ILIKE '%OWNER TO awsuser%'
+  AND sequence = 0
+  AND (text ILIKE '%lga_dev_tdl_stg.%'
+    OR text ILIKE '%sbx_sahsha.%'
+    OR text ILIKE '%zlga_dev_dw.%')
+ORDER BY 1;
