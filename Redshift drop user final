@@ -196,3 +196,18 @@ DROP USER ramana_challapalli;
 DROP USER roger_luce;
 DROP USER saira_walia;
 DROP USER sankara_sadasivuni;
+
+
+
+--##############
+SELECT starttime, TRIM(text) AS ddl
+FROM stl_ddltext
+WHERE text ILIKE '%OWNER TO awsuser%'
+ORDER BY starttime, sequence;
+
+
+(stl_ddltext only keeps a few days of history, so run this soon.)
+3. Dev: run the same statements again with OWNER TO glue_dev_service.
+4. UAT/PROD: send that list to the Analytics team. Tell them you've moved these objects to awsuser and ask which ones should go to glue_uat_service or glue_prod_service. Moving the owner again is quick and needs no downtime.
+5. If you ran 4b, check for missing grants with SELECT * FROM svv_relation_privileges WHERE identity_name LIKE 'glue_%'; and ask Analytics whether anything is missing.
+I can also update the bulk script to follow their process, if that helps. In Dev it would move objects to glue_dev_service, and in UAT and PROD it would only produce the list for Analytics to review.
