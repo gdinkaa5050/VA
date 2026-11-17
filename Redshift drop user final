@@ -280,7 +280,7 @@ WHERE pg_get_userbyid(c.relowner) = 'awsuser'
   AND c.relkind IN ('r','v');
 
 
-
+-- final check
 
 SELECT DISTINCT
   RTRIM(REPLACE(SUBSTRING(text, POSITION('ALTER' IN text)),
@@ -292,3 +292,11 @@ WHERE text ILIKE '%OWNER TO awsuser%'
     OR text ILIKE '%sbx_sahsha.%'
     OR text ILIKE '%zlga_dev_dw.%')
 ORDER BY 1;
+
+SELECT TRIM(n.nspname) AS schema_name, TRIM(c.relname) AS object_name
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE pg_get_userbyid(c.relowner) = 'awsuser'
+  AND n.nspname IN ('zlga_dev_dw','sbx_sahsha','lga_dev_tdl_stg')
+  AND c.relkind IN ('r','v')
+ORDER BY 1, 2;
