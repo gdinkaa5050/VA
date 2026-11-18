@@ -1,0 +1,44 @@
+SELECT u.usename, COUNT(*) AS objects_owned
+FROM pg_class c
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.valuntil < '2026-11-18'::abstime
+  AND u.usename NOT IN ('ololade_johnson','pbisuper','awsuser','rdsdb')
+  AND u.usename NOT LIKE 'glue%'
+  AND c.relkind IN ('r','v')
+GROUP BY 1
+ORDER BY 2 DESC;
+
+--full list
+SELECT u.usename AS departed_user, TRIM(n.nspname) AS schema_name,
+       TRIM(c.relname) AS object_name,
+       CASE c.relkind WHEN 'r' THEN 'table' ELSE 'view' END AS object_type
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.valuntil < '2026-11-18'::abstime
+  AND u.usename NOT IN ('ololade_johnson','pbisuper','awsuser','rdsdb')
+  AND u.usename NOT LIKE 'glue%'
+  AND c.relkind IN ('r','v')
+UNION ALL
+SELECT u.usename, TRIM(n.nspname), TRIM(n.nspname), 'schema'
+FROM pg_namespace n
+JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE u.valuntil < '2026-11-18'::abstime
+  AND u.usename NOT IN ('ololade_johnson','pbisuper','awsuser','rdsdb')
+  AND u.usename NOT LIKE 'glue%'
+UNION ALL
+SELECT u.usename, TRIM(n.nspname), TRIM(p.proname), 'function/procedure'
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_user u ON u.usesysid = p.proowner
+WHERE u.valuntil < '2026-11-18'::abstime
+  AND u.usename NOT IN ('ololade_johnson','pbisuper','awsuser','rdsdb')
+  AND u.usename NOT LIKE 'glue%'
+ORDER BY 1, 2, 3;
+
+--check
+SELECT COUNT(*)
+FROM pg_user
+WHERE valuntil < '2026-11-18'::abstime
+  AND usename NOT IN ('ololade_johnson','pbisuper','awsuser','rdsdb')
+  AND usename NOT LIKE 'glue%';
