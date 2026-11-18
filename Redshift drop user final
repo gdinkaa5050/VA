@@ -376,3 +376,11 @@ SELECT * FROM pg_default_acl WHERE defacluser = 107;
 
 DROP USER joel_dubbels;
 DROP USER joel_dubbels;
+
+
+--final check
+SELECT usename FROM pg_user
+WHERE usename IN ('amrin_syed','anil_gadde','ferris_t_samara','jimmy_nguyen','joe_shrewsbury',
+                  'joel_dubbels','kamsaladevi_baskaradoss','katie_brewster','lena_park','lisa_ha',
+                  'mahesh_kc','patrick_watts','prasannan_krishnasharma','ramana_challapalli',
+                  'roger_luce','saira_walia','sankara_sadasivuni');
