@@ -1,0 +1,861 @@
+--reassigning the object to glue dev service
+
+-- Tables and views
+SELECT 'ALTER TABLE ' || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(c.relname))
+       || ' OWNER TO glue_uat_service;' AS ddl
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_muddana')
+  AND c.relkind IN ('r','v')
+
+UNION ALL
+
+-- Schemas
+SELECT 'ALTER SCHEMA ' || quote_ident(TRIM(n.nspname)) || ' OWNER TO glue_uat_service;'
+FROM pg_namespace n
+JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_muddana')
+
+UNION ALL
+
+-- Functions and stored procedures
+SELECT 'ALTER ' || CASE WHEN p.prokind = 'p' THEN 'PROCEDURE ' ELSE 'FUNCTION ' END
+       || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(p.proname))
+       || '(' || oidvectortypes(p.proargtypes) || ') OWNER TO glue_uat_service;'
+FROM pg_proc_info p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_user u ON u.usesysid = p.proowner
+WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_muddana');
+
+--check
+SELECT COUNT(*) AS tables_views_left
+FROM pg_class c
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_muddana')
+  AND c.relkind IN ('r','v');
+
+SELECT COUNT(*) AS schemas_left
+FROM pg_namespace n
+JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_muddana');
+
+SELECT COUNT(*) AS functions_left
+FROM pg_proc p
+JOIN pg_user u ON u.usesysid = p.proowner
+WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_muddana');
+
+
+
+
+
+
+
+
+-- ======================================================================
+-- UAT Redshift offboarding: 77 users
+-- New owner for objects:  glue_uat_service   (databases go to awsuser)
+--
+-- EXCLUDED on purpose (do NOT drop):
+--   daniel_amoh, ololade_johnson, bandish_gor  (red in the sheet)
+--   pbisuper  (looks like a Power BI service account; add it only if confirmed)
+--
+-- RULES
+--   * Turn OFF "Limit 100" before every run.
+--   * Make changes only OUTSIDE the UAT batch window 6:00-9:30 AM ET (5:00-8:30 AM CT).
+--   * Every "GENERATOR" query only OUTPUTS SQL. Copy all output rows into a new tab and run them.
+--   * Run Parts A and B in EACH database on the cluster. Part C (DROP) runs once.
+--
+-- TIMING (per the Analytics plan)
+--   Part A today  -> tell Analytics -> they monitor ETL for at least 1 day
+--   Part B + C after Analytics confirms the ETL is fine
+-- ======================================================================
+
+
+-- ######################################################################
+-- PART A: CHECKS, BACKUP, TRANSFER OWNERSHIP
+-- ######################################################################
+
+-- A0. Confirm you're on the UAT cluster, as a superuser that is NOT on the list
+SELECT current_database(), current_user;
+SELECT usename FROM pg_user WHERE usename = 'glue_uat_service';   -- must return 1 row
+
+-- A1. Confirm the users exist. Expect 77. If fewer, a name is misspelled or the user doesn't exist here.
+SELECT usename, usesysid, usesuper, valuntil
+FROM pg_user
+WHERE usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+ORDER BY usename;
+
+-- A2. Active sessions by these users (should be none)
+--     If any: SELECT pg_terminate_backend(<process>);
+SELECT process, TRIM(user_name) AS user_name, TRIM(db_name) AS db_name, starttime
+FROM stv_sessions
+WHERE TRIM(user_name) IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- A3. BACKUP: everything they own. Export to CSV and send to Analytics.
+SELECT u.usename AS old_owner, current_database() AS database_name,
+       TRIM(n.nspname) AS schema_name, TRIM(c.relname) AS object_name,
+       CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' END AS object_type
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+  AND c.relkind IN ('r','v')
+UNION ALL
+SELECT u.usename, current_database(), TRIM(n.nspname), TRIM(n.nspname), 'schema'
+FROM pg_namespace n
+JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+UNION ALL
+SELECT u.usename, current_database(), TRIM(n.nspname), TRIM(p.proname), 'function/procedure'
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_user u ON u.usesysid = p.proowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+UNION ALL
+SELECT u.usename, TRIM(d.datname), NULL, TRIM(d.datname), 'database'
+FROM pg_database d
+JOIN pg_user u ON u.usesysid = d.datdba
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+ORDER BY 1, 3, 4;
+
+-- A4. GENERATOR: transfer tables and views
+SELECT 'ALTER TABLE ' || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(c.relname))
+       || ' OWNER TO glue_uat_service;' AS ddl
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+  AND c.relkind IN ('r','v');
+
+-- A5. GENERATOR: transfer schemas
+SELECT 'ALTER SCHEMA ' || quote_ident(TRIM(n.nspname)) || ' OWNER TO glue_uat_service;' AS ddl
+FROM pg_namespace n
+JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- A6. GENERATOR: transfer functions and stored procedures
+SELECT 'ALTER ' || CASE WHEN p.prokind = 'p' THEN 'PROCEDURE ' ELSE 'FUNCTION ' END
+       || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(p.proname))
+       || '(' || oidvectortypes(p.proargtypes) || ') OWNER TO glue_uat_service;' AS ddl
+FROM pg_proc_info p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_user u ON u.usesysid = p.proowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- A7. GENERATOR: transfer databases (to awsuser, not the Glue ID)
+SELECT 'ALTER DATABASE ' || quote_ident(TRIM(d.datname)) || ' OWNER TO awsuser;' AS ddl
+FROM pg_database d
+JOIN pg_user u ON u.usesysid = d.datdba
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- A8. CHECK: all must return 0
+SELECT COUNT(*) AS tables_views_left FROM pg_class c JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ) AND c.relkind IN ('r','v');
+SELECT COUNT(*) AS schemas_left FROM pg_namespace n JOIN pg_user u ON u.usesysid = n.nspowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+SELECT COUNT(*) AS functions_left FROM pg_proc p JOIN pg_user u ON u.usesysid = p.proowner
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- >>> STOP. Tell Analytics the reassignment is done. Wait for their ETL sign-off. <<<
+
+
+-- ######################################################################
+-- PART B: GRANTS AND PRIVILEGES (after Analytics sign-off)
+-- B1-B2 need admin.v_generate_user_grant_revoke_ddl. Check it exists first:
+--   SELECT viewname FROM pg_views WHERE schemaname = 'admin'
+--     AND viewname = 'v_generate_user_grant_revoke_ddl';
+-- If it returns nothing, skip B1-B2 and use B3.
+-- ######################################################################
+
+-- B1. GENERATOR: re-create grants these users GAVE to others, with awsuser as grantor,
+--     so the other users and Glue IDs keep their access. Review the output before running.
+SELECT regexp_replace(ddl, 'AUTHORIZATION "?' || grantor || '"?', 'AUTHORIZATION awsuser') AS ddl
+FROM admin.v_generate_user_grant_revoke_ddl
+WHERE grantor IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+  AND grantee NOT IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+  AND ddltype = 'grant'
+  AND objtype <> 'default acl'
+ORDER BY objseq, grantseq;
+
+-- B2. GENERATOR: revoke everything granted TO or BY these users
+SELECT ddl
+FROM admin.v_generate_user_grant_revoke_ddl
+WHERE ddltype = 'revoke'
+  AND (grantee IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ) OR grantor IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ))
+ORDER BY objseq, grantseq DESC;
+
+-- B3. GENERATOR (fallback / mop-up): revoke privileges held by these users
+SELECT DISTINCT 'REVOKE ALL ON SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';' AS ddl
+FROM svv_schema_privileges
+WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+UNION
+SELECT DISTINCT 'REVOKE ALL ON ' || quote_ident(namespace_name) || '.' || quote_ident(relation_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_relation_privileges
+WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+UNION
+SELECT DISTINCT 'REVOKE ALL ON FUNCTION ' || quote_ident(namespace_name) || '.' || quote_ident(function_name)
+       || '(' || NVL(argument_types, '') || ') FROM ' || quote_ident(identity_name) || ';'
+FROM svv_function_privileges
+WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+UNION
+SELECT DISTINCT 'REVOKE ALL ON DATABASE ' || quote_ident(database_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_database_privileges
+WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- B4. GENERATOR: revoke default privileges (owned BY these users, or granted TO them)
+--     Skips global "user to themselves" entries; B5 handles those.
+SELECT DISTINCT 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(owner_name)
+       || CASE WHEN schema_name IS NOT NULL THEN ' IN SCHEMA ' || quote_ident(schema_name) ELSE '' END
+       || ' REVOKE ALL ON '
+       || CASE object_type WHEN 'RELATION' THEN 'TABLES'
+                           WHEN 'FUNCTION' THEN 'FUNCTIONS'
+                           WHEN 'PROCEDURE' THEN 'PROCEDURES' END
+       || ' FROM '
+       || CASE WHEN grantee_type = 'group' THEN 'GROUP ' || quote_ident(grantee_name)
+               WHEN grantee_type = 'role'  THEN 'ROLE '  || quote_ident(grantee_name)
+               WHEN grantee_type = 'public' OR grantee_name = 'public' THEN 'PUBLIC'
+               ELSE quote_ident(grantee_name) END
+       || ';' AS ddl
+FROM svv_default_privileges
+WHERE (owner_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ) OR grantee_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ))
+  AND NOT (schema_name IS NULL AND owner_name = grantee_name);
+
+-- B5. GENERATOR: reset global default privileges to Redshift's built-in defaults.
+--     This deletes the leftover pg_default_acl rows (the joel_dubbels fix).
+--     Procedures get NO grant to PUBLIC.
+SELECT DISTINCT
+       'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON TABLES TO '     || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON FUNCTIONS TO '  || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT EXECUTE ON FUNCTIONS TO PUBLIC; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON PROCEDURES TO ' || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' REVOKE EXECUTE ON PROCEDURES FROM PUBLIC;' AS ddl
+FROM pg_default_acl a
+JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE a.defaclnamespace = 0
+  AND u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+
+-- B6. CHECK: all must return 0 rows
+SELECT u.usename, a.defaclnamespace, a.defaclobjtype, a.defaclacl
+FROM pg_default_acl a JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE u.usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+SELECT * FROM svv_schema_privileges   WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+SELECT * FROM svv_relation_privileges WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+SELECT * FROM svv_function_privileges WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+SELECT * FROM svv_database_privileges WHERE identity_type = 'user' AND identity_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+SELECT * FROM svv_default_privileges  WHERE owner_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ) OR grantee_name IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
+-- (if the admin view exists)
+SELECT COUNT(*) AS admin_view_left FROM admin.v_generate_user_grant_revoke_ddl
+WHERE ddltype = 'revoke' AND (grantee IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ) OR grantor IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  ));
+
+
+-- ######################################################################
+-- PART C: DROP (once, after Parts A and B are clean in EVERY database)
+-- ######################################################################
+
+-- C1. GENERATOR: drop statements
+SELECT 'DROP USER ' || quote_ident(usename) || ';' AS ddl
+FROM pg_user
+WHERE usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  )
+ORDER BY 1;
+
+-- C2. CHECK: must return 0 rows. Anyone left failed to drop; send the error.
+SELECT usename FROM pg_user WHERE usename IN (
+    'kumar_nishant','brad_jacobson','naga_bolisetty','prasannan_krishnasharma','carleton_sea',
+    'jaya_gongati','jayachandra_gongati','kamsaladevi_baskaradoss','lauren_guse_sample','sharma_karan',
+    'abhijeet_tyagi','anil_gadde','brenda_bowen','brian_mcdonald','joe_wiedow',
+    'katie_brewster','lena_park','matt_eden','patrick_watts','challapalli_ramana',
+    'arthur_hofisi','hari_vankadara','marcia_griffith','alex_kelley','joe_shrewsbury',
+    'rayne_krebsbach','saugat_kandel','uma_chandar_ramachandran','amit_rashinkar','diamond_carter',
+    'amrin_syed','an_vu','anjali_sharma','anthony_watts','armaan_dawer',
+    'brandon_oh','brent_mavity','brian_mcdonald1','bryan_bestwick','bryan_roettger',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','haobo_luo',
+    'ibrahim_ali','jeffrey_gyarmathy','john_kim','john_kim13','lemma_foto',
+    'lia_thiessen','lisa_ha','mitch_dixon','mohammed_iqbal','moses_vo',
+    'nebiyou_woldeyohannes','phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni',
+    'satya_yerra','seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim',
+    'suniti_dev','timothy_roach','winnie_philip','adi_gupta','jimmy_nguyen',
+    'lauren_jordan','rajesh_veedulamudi','ramana_challapalli','mahesh_kc','edwin_dykshorn',
+    'mitchel_rigsby','saira_walia'
+  );
