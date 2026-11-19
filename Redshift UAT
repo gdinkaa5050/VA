@@ -12,8 +12,19 @@ WHERE u.usename IN ('moses_vo','katie_brewster','matt_eden','seshagiri_rao_mudda
   AND c.relkind IN ('r','v')
 ORDER BY 1, 2, 3;
 
+--check admin user
+SELECT usename, usesysid FROM pg_user WHERE usesuper = true AND usesysid < 110 ORDER BY usesysid;
 
 
+--check which statement went through 
+SELECT TRIM(n.nspname) AS schema_name, TRIM(c.relname) AS object_name,
+       pg_get_userbyid(c.relowner) AS owner
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE (n.nspname, c.relname) IN (('admin','v_generate_tbl_ddl'),('lgy_tdw','vdwh_oblgr'),
+       ('lgy_tdw','tdwh_oblgr_hub'),('src_cmn','testident'),('src_cmn','loan_hist_filt'),
+       ('src_cmn','loan_hist'),('public','fact_loan_event0905'));
+
+SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'admin';
 
 
 --reassigning the object to glue dev service
