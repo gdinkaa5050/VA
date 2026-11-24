@@ -1,0 +1,468 @@
+-- ======================================================================
+-- PROD Redshift: offboard departed users who OWN NO OBJECTS (61 candidates)
+-- Users who own objects are NOT touched here; they go through the
+-- Analytics review and reassignment in the next CR step.
+--
+-- RULES
+--   * Run under the approved CR, outside the batch window 6:00-9:30 AM ET (5:00-8:30 AM CT).
+--   * Turn OFF "Limit 100" before every run.
+--   * GENERATOR queries only OUTPUT SQL. Copy all output rows into a new tab and run them.
+--   * Run Steps 1-4 in EACH database on the PROD cluster. Step 5 (DROP) runs once.
+--   * 5 candidates are SUPERUSERS: swain_dennis, abhijeet_tyagi, anil_gadde,
+--     anthony_watts, joe_wiedow. Do not run this logged in as any of them.
+-- ======================================================================
+
+
+-- ----------------------------------------------------------------------
+-- STEP 0. CONFIRM ENVIRONMENT
+-- ----------------------------------------------------------------------
+SELECT current_database(), current_user;
+
+-- PROD admin user name (usually usesysid 100). Note it; it may differ from UAT.
+SELECT usename, usesysid FROM pg_user WHERE usesuper = true AND usesysid < 110 ORDER BY usesysid;
+
+-- Candidates that exist on PROD (expect up to 61)
+SELECT usename, usesysid, usesuper, valuntil
+FROM pg_user
+WHERE usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+ORDER BY usename;
+
+
+-- ----------------------------------------------------------------------
+-- STEP 1. CLASSIFY: who owns objects in THIS database?
+--   Export to CSV in every database. A user is "NO OBJECTS" only if
+--   they show NO OBJECTS in EVERY database.
+-- ----------------------------------------------------------------------
+SELECT u.usename,
+       current_database() AS database_name,
+       (SELECT COUNT(*) FROM pg_class     c WHERE c.relowner = u.usesysid) AS relations_owned,
+       (SELECT COUNT(*) FROM pg_namespace n WHERE n.nspowner = u.usesysid) AS schemas_owned,
+       (SELECT COUNT(*) FROM pg_proc      p WHERE p.proowner = u.usesysid) AS functions_owned,
+       (SELECT COUNT(*) FROM pg_database  d WHERE d.datdba   = u.usesysid) AS databases_owned,
+       CASE WHEN u.usesysid IN (SELECT relowner FROM pg_class)
+              OR u.usesysid IN (SELECT nspowner FROM pg_namespace)
+              OR u.usesysid IN (SELECT proowner FROM pg_proc)
+              OR u.usesysid IN (SELECT datdba   FROM pg_database)
+            THEN 'OWNS OBJECTS - hold for next CR step'
+            ELSE 'NO OBJECTS - offboard now' END AS status
+FROM pg_user u
+WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+ORDER BY status, u.usename;
+
+-- Summary count
+SELECT CASE WHEN u.usesysid IN (SELECT relowner FROM pg_class)
+              OR u.usesysid IN (SELECT nspowner FROM pg_namespace)
+              OR u.usesysid IN (SELECT proowner FROM pg_proc)
+              OR u.usesysid IN (SELECT datdba   FROM pg_database)
+            THEN 'OWNS OBJECTS' ELSE 'NO OBJECTS' END AS status,
+       COUNT(*) AS users
+FROM pg_user u
+WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+GROUP BY 1;
+
+
+-- ----------------------------------------------------------------------
+-- STEP 2. ACTIVE SESSIONS for no-object users (should be none)
+--   If any: SELECT pg_terminate_backend(<process>);
+-- ----------------------------------------------------------------------
+SELECT process, TRIM(user_name) AS user_name, TRIM(db_name) AS db_name, starttime
+FROM stv_sessions
+WHERE TRIM(user_name) IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database));
+
+
+-- ----------------------------------------------------------------------
+-- STEP 3. REVOKE PRIVILEGES (no-object users only)
+-- ----------------------------------------------------------------------
+
+-- 3a. GENERATOR: privileges these users hold
+SELECT DISTINCT 'REVOKE ALL ON SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';' AS ddl
+FROM svv_schema_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database))
+UNION
+SELECT DISTINCT 'REVOKE ALL ON ' || quote_ident(namespace_name) || '.' || quote_ident(relation_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_relation_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database))
+UNION
+SELECT DISTINCT 'REVOKE ALL ON FUNCTION ' || quote_ident(namespace_name) || '.' || quote_ident(function_name)
+       || '(' || NVL(argument_types, '') || ') FROM ' || quote_ident(identity_name) || ';'
+FROM svv_function_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database))
+UNION
+SELECT DISTINCT 'REVOKE ALL ON DATABASE ' || quote_ident(database_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_database_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database));
+
+-- 3b. GENERATOR: schema-level default privileges (owned BY or granted TO them)
+SELECT DISTINCT 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(owner_name)
+       || ' IN SCHEMA ' || quote_ident(schema_name)
+       || ' REVOKE ALL ON '
+       || CASE object_type WHEN 'RELATION' THEN 'TABLES'
+                           WHEN 'FUNCTION' THEN 'FUNCTIONS'
+                           WHEN 'PROCEDURE' THEN 'PROCEDURES' END
+       || ' FROM '
+       || CASE WHEN grantee_type = 'group' THEN 'GROUP ' || quote_ident(grantee_name)
+               WHEN grantee_type = 'role'  THEN 'ROLE '  || quote_ident(grantee_name)
+               WHEN grantee_type = 'public' OR grantee_name = 'public' THEN 'PUBLIC'
+               ELSE quote_ident(grantee_name) END
+       || ';' AS ddl
+FROM svv_default_privileges
+WHERE schema_name IS NOT NULL
+  AND (owner_name   IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database))
+    OR grantee_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database)));
+
+-- 3c. GENERATOR: reset GLOBAL default privileges (the joel_dubbels fix).
+--     Clears leftover pg_default_acl rows. Procedures get no PUBLIC grant.
+SELECT DISTINCT
+       'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON TABLES TO '     || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON FUNCTIONS TO '  || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT EXECUTE ON FUNCTIONS TO PUBLIC; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON PROCEDURES TO ' || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' REVOKE EXECUTE ON PROCEDURES FROM PUBLIC;' AS ddl
+FROM pg_default_acl a
+JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE a.defaclnamespace = 0
+  AND u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database);
+
+
+-- ----------------------------------------------------------------------
+-- STEP 4. CHECK: all must return 0 rows (in every database)
+-- ----------------------------------------------------------------------
+SELECT u.usename, a.defaclnamespace, a.defaclobjtype, a.defaclacl
+FROM pg_default_acl a JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database);
+SELECT * FROM svv_schema_privileges   WHERE identity_type = 'user' AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database));
+SELECT * FROM svv_relation_privileges WHERE identity_type = 'user' AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database));
+SELECT * FROM svv_function_privileges WHERE identity_type = 'user' AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database));
+SELECT * FROM svv_database_privileges WHERE identity_type = 'user' AND identity_name IN (SELECT usename FROM pg_user u WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database));
+
+
+-- ----------------------------------------------------------------------
+-- STEP 5. DROP (once, after Steps 1-4 are clean in every database)
+--   Before running: remove any user the Step 1 CSVs show as
+--   OWNS OBJECTS in ANOTHER database. Redshift will refuse to drop
+--   them anyway, so a mistake fails safely.
+-- ----------------------------------------------------------------------
+
+-- 5a. GENERATOR
+SELECT 'DROP USER ' || quote_ident(u.usename) || ';' AS ddl
+FROM pg_user u
+WHERE u.usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  )
+  AND u.usesysid NOT IN (SELECT relowner FROM pg_class)
+  AND u.usesysid NOT IN (SELECT nspowner FROM pg_namespace)
+  AND u.usesysid NOT IN (SELECT proowner FROM pg_proc)
+  AND u.usesysid NOT IN (SELECT datdba FROM pg_database)
+ORDER BY 1;
+
+-- 5b. CHECK: who is left from the 61? Should be ONLY the "OWNS OBJECTS" users.
+SELECT usename FROM pg_user WHERE usename IN (
+    'kamsaladevi_baskaradoss','swain_dennis','abhijeet_tyagi','anil_gadde','anthony_watts',
+    'joe_wiedow','amit_rashinkar','amrin_syed','diamond_carter','karan_sharma',
+    'kristina_webb','an_vu','anjali_sharma','armaan_dawer','brandon_oh',
+    'brenda_bowen','brent_mavity','brian_mcdonald','brian_mcdonald1','bryan_bestwick',
+    'david_mccomber','erichsen_kaplan','ferris_t_samara','gandhi_madugula','gia_wood',
+    'haobo_luo','ibrahim_ali','jeffrey_gyarmathy','john_kim13','katie_brewster',
+    'lemma_foto','lena_park','lia_thiessen','lisa_ha','matt_eden',
+    'mitch_dixon','mohammed_iqbal','moses_vo','nebiyou_woldeyohannes','patrick_watts',
+    'phoebe_addo','raja_nandyala','roger_luce','sankara_sadasivuni','satya_yerra',
+    'seshagiri_rao_muddana','shenouda_nageub','sowmith_nagabhiru','sumalatha_dasarim','suniti_dev',
+    'timothy_roach','winnie_philip','jimmy_nguyen','lauren_jordan','rajesh_veedulamudi',
+    'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
+    'steven_brownell'
+  ) ORDER BY 1;
