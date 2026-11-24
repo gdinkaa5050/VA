@@ -466,3 +466,141 @@ SELECT usename FROM pg_user WHERE usename IN (
     'ramana_challapalli','mahesh_kc','edwin_dykshorn','mitchel_rigsby','saira_walia',
     'steven_brownell'
   ) ORDER BY 1;
+
+
+
+
+######################
+-- ======================================================================
+-- PROD: reassign and drop 7 users who own only tables/views
+-- New owner: glue_prod_service
+-- Turn OFF "Limit 100". Run outside 5:00-8:30 AM CT.
+-- GENERATOR queries only print SQL: copy the output into a new tab and run it.
+-- ======================================================================
+
+-- 0. CHECKS
+SELECT current_database(), current_user;
+SELECT usename FROM pg_user WHERE usename = 'glue_prod_service';          -- expect 1 row
+SELECT usename, usesysid, usesuper FROM pg_user
+WHERE usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                  'karan_sharma','matt_eden','sumalatha_dasarim');           -- expect 7 rows
+
+-- Active sessions (should be none; if any: SELECT pg_terminate_backend(<process>);)
+SELECT process, TRIM(user_name) AS user_name, starttime FROM stv_sessions
+WHERE TRIM(user_name) IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                          'karan_sharma','matt_eden','sumalatha_dasarim');
+
+-- 1. BACKUP LIST: export to CSV (keep as your CR record)
+SELECT u.usename AS old_owner, TRIM(n.nspname) AS schema_name, TRIM(c.relname) AS object_name,
+       CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'mat view' END AS object_type
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                    'karan_sharma','matt_eden','sumalatha_dasarim')
+  AND c.relkind IN ('r','v','m')
+ORDER BY 1, 2, 3;
+
+-- 2. GENERATOR: reassign to glue_prod_service
+SELECT 'ALTER TABLE ' || quote_ident(TRIM(n.nspname)) || '.' || quote_ident(TRIM(c.relname))
+       || ' OWNER TO glue_prod_service;' AS ddl
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                    'karan_sharma','matt_eden','sumalatha_dasarim')
+  AND c.relkind IN ('r','v','m');
+
+-- 3. CHECK: must return 0
+SELECT COUNT(*) AS objects_left
+FROM pg_class c JOIN pg_user u ON u.usesysid = c.relowner
+WHERE u.usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                    'karan_sharma','matt_eden','sumalatha_dasarim');
+
+-- >>> Tell Analytics the reassignment is done. Drop only after their ETL sign-off. <<<
+
+-- 4. GENERATOR: revoke privileges these users hold
+SELECT DISTINCT 'REVOKE ALL ON SCHEMA ' || quote_ident(namespace_name)
+       || ' FROM ' || quote_ident(identity_name) || ';' AS ddl
+FROM svv_schema_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim')
+UNION
+SELECT DISTINCT 'REVOKE ALL ON ' || quote_ident(namespace_name) || '.' || quote_ident(relation_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_relation_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim')
+UNION
+SELECT DISTINCT 'REVOKE ALL ON FUNCTION ' || quote_ident(namespace_name) || '.' || quote_ident(function_name)
+       || '(' || NVL(argument_types, '') || ') FROM ' || quote_ident(identity_name) || ';'
+FROM svv_function_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim')
+UNION
+SELECT DISTINCT 'REVOKE ALL ON DATABASE ' || quote_ident(database_name)
+       || ' FROM ' || quote_ident(identity_name) || ';'
+FROM svv_database_privileges
+WHERE identity_type = 'user'
+  AND identity_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim');
+
+-- 5. GENERATOR: schema-level default privileges (owned BY or granted TO them)
+SELECT DISTINCT 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(owner_name)
+       || ' IN SCHEMA ' || quote_ident(schema_name) || ' REVOKE ALL ON '
+       || CASE object_type WHEN 'RELATION' THEN 'TABLES'
+                           WHEN 'FUNCTION' THEN 'FUNCTIONS'
+                           WHEN 'PROCEDURE' THEN 'PROCEDURES' END
+       || ' FROM '
+       || CASE WHEN grantee_type = 'group' THEN 'GROUP ' || quote_ident(grantee_name)
+               WHEN grantee_type = 'role'  THEN 'ROLE '  || quote_ident(grantee_name)
+               WHEN grantee_type = 'public' OR grantee_name = 'public' THEN 'PUBLIC'
+               ELSE quote_ident(grantee_name) END || ';' AS ddl
+FROM svv_default_privileges
+WHERE schema_name IS NOT NULL
+  AND (owner_name   IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim')
+    OR grantee_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim'));
+
+-- 6. GENERATOR: reset global default privileges (clears leftover pg_default_acl rows)
+SELECT DISTINCT
+       'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON TABLES TO '     || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON FUNCTIONS TO '  || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT EXECUTE ON FUNCTIONS TO PUBLIC; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' GRANT ALL ON PROCEDURES TO ' || quote_ident(u.usename) || '; '
+    || 'ALTER DEFAULT PRIVILEGES FOR USER ' || quote_ident(u.usename) || ' REVOKE EXECUTE ON PROCEDURES FROM PUBLIC;' AS ddl
+FROM pg_default_acl a
+JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE a.defaclnamespace = 0
+  AND u.usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                    'karan_sharma','matt_eden','sumalatha_dasarim');
+
+-- 7. CHECK: all must return 0 rows
+SELECT u.usename, a.defaclnamespace, a.defaclobjtype, a.defaclacl
+FROM pg_default_acl a JOIN pg_user u ON u.usesysid = a.defacluser
+WHERE u.usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                    'karan_sharma','matt_eden','sumalatha_dasarim');
+SELECT * FROM svv_relation_privileges WHERE identity_type = 'user'
+  AND identity_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim');
+SELECT * FROM svv_schema_privileges WHERE identity_type = 'user'
+  AND identity_name IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                        'karan_sharma','matt_eden','sumalatha_dasarim');
+
+-- 8. DROP
+DROP USER anjali_sharma;
+DROP USER edwin_dykshorn;
+DROP USER john_kim13;
+DROP USER kamsaladevi_baskaradoss;
+DROP USER karan_sharma;
+DROP USER matt_eden;
+DROP USER sumalatha_dasarim;
+
+-- 9. FINAL CHECK: must return 0 rows
+SELECT usename FROM pg_user
+WHERE usename IN ('anjali_sharma','edwin_dykshorn','john_kim13','kamsaladevi_baskaradoss',
+                  'karan_sharma','matt_eden','sumalatha_dasarim');
